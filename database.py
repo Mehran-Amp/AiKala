@@ -155,20 +155,40 @@ class Database:
                     sort_order INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
-
-                -- ایندکس‌ها برای سرعت بالای جستجو
-                CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
-                CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
-                CREATE INDEX IF NOT EXISTS idx_orders_code ON orders(order_code);
-                CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
-                CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
-                CREATE INDEX IF NOT EXISTS idx_channel_posts_date ON channel_posts(date);
-                CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id);
-                CREATE INDEX IF NOT EXISTS idx_user_requests_status ON user_requests(status);
             """)
             await db.commit()
 
-            # بررسی و مهاجرت خودکار ستون‌های جدید به جدول‌های قبلی بدون از دست رفتن داده‌ها
+            # ۱. بررسی و مهاجرت خودکار جدول محصولات (products)
+            try:
+                p_cursor = await db.execute("PRAGMA table_info(products);")
+                p_cols = [row[1] for row in await p_cursor.fetchall()]
+                if p_cols:
+                    if "category" not in p_cols:
+                        await db.execute("ALTER TABLE products ADD COLUMN category TEXT DEFAULT 'default';")
+                        if "category_name" in p_cols:
+                            await db.execute("UPDATE products SET category = category_name WHERE (category IS NULL OR category = 'default') AND category_name IS NOT NULL;")
+                        elif "category_key" in p_cols:
+                            await db.execute("UPDATE products SET category = category_key WHERE (category IS NULL OR category = 'default') AND category_key IS NOT NULL;")
+                    if "category_key" not in p_cols:
+                        await db.execute("ALTER TABLE products ADD COLUMN category_key TEXT DEFAULT '';")
+                    if "category_name" not in p_cols:
+                        await db.execute("ALTER TABLE products ADD COLUMN category_name TEXT DEFAULT '';")
+                    if "updated_at" not in p_cols:
+                        await db.execute("ALTER TABLE products ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+                    if "colors_json" not in p_cols:
+                        await db.execute("ALTER TABLE products ADD COLUMN colors_json TEXT DEFAULT '{}';")
+                    if "specs_json" not in p_cols:
+                        await db.execute("ALTER TABLE products ADD COLUMN specs_json TEXT DEFAULT '{}';")
+                    if "url" not in p_cols:
+                        await db.execute("ALTER TABLE products ADD COLUMN url TEXT DEFAULT '';")
+                    if "image_url" not in p_cols:
+                        await db.execute("ALTER TABLE products ADD COLUMN image_url TEXT DEFAULT '';")
+                    if "source" not in p_cols:
+                        await db.execute("ALTER TABLE products ADD COLUMN source TEXT DEFAULT 'MomtazKalla';")
+            except Exception as e:
+                logger.warning(f"Products auto-migration note: {e}")
+
+            # ۲. بررسی و مهاجرت خودکار جدول‌های سفارشات و درخواست‌ها
             try:
                 cursor = await db.execute("PRAGMA table_info(user_requests);")
                 columns = [row[1] for row in await cursor.fetchall()]
@@ -181,9 +201,29 @@ class Database:
                 ord_columns = [row[1] for row in await ord_cursor.fetchall()]
                 if "total_price" not in ord_columns:
                     await db.execute("ALTER TABLE orders ADD COLUMN total_price TEXT DEFAULT '0';")
-                await db.commit()
             except Exception as e:
-                logger.warning(f"Auto-migration note: {e}")
+                logger.warning(f"Orders/Requests auto-migration note: {e}")
+
+            await db.commit()
+
+            # ۳. ساخت امن ایندکس‌ها با محافظت کامل در برابر خطا
+            safe_indexes = [
+                ("idx_orders_user", "orders(user_id)"),
+                ("idx_orders_status", "orders(status)"),
+                ("idx_orders_code", "orders(order_code)"),
+                ("idx_products_name", "products(name)"),
+                ("idx_products_category", "products(category)"),
+                ("idx_channel_posts_date", "channel_posts(date)"),
+                ("idx_price_history_product", "price_history(product_id)"),
+                ("idx_user_requests_status", "user_requests(status)"),
+            ]
+            for idx_name, target in safe_indexes:
+                try:
+                    await db.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {target};")
+                except Exception as idx_err:
+                    logger.debug(f"Index creation note ({idx_name}): {idx_err}")
+
+            await db.commit()
 
         logger.info("Database initialized successfully.")
 

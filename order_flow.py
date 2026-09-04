@@ -416,8 +416,7 @@ def get_order_conversation_handler() -> ConversationHandler:
         fallbacks=[
             CommandHandler("cancel", cancel_conversation),
             CallbackQueryHandler(cancel_and_handle_nav_callback, pattern=nav_pattern)
-        ],
-        per_message=False
+        ]
     )
 
 def get_receipt_conversation_handler() -> ConversationHandler:
@@ -433,6 +432,5 @@ def get_receipt_conversation_handler() -> ConversationHandler:
         fallbacks=[
             CommandHandler("cancel", cancel_conversation),
             CallbackQueryHandler(cancel_and_handle_nav_callback, pattern=nav_pattern)
-        ],
-        per_message=False
+        ]
     )
