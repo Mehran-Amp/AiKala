@@ -534,6 +534,12 @@ def extract_products():
 
                 pid = cid.strip()
 
+                try:
+                    from search_engine import detect_product_brand
+                    detected_brand = detect_product_brand(full_name)
+                except Exception:
+                    detected_brand = full_name.split()[1] if len(full_name.split()) > 1 else ""
+
                 catalog[pid] = {
                     "product_id": pid,
                     "category_key": "small_appliances",
@@ -541,7 +547,7 @@ def extract_products():
                     "subcategory": sub_title,
                     "name": full_name,
                     "model_number": full_name,
-                    "brand": full_name.split()[1] if len(full_name.split()) > 1 else "",
+                    "brand": detected_brand,
                     "price": price,
                     "status": "b" if price > 0 else "o",
                     "score": score,

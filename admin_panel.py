@@ -67,6 +67,7 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         [InlineKeyboardButton("📋 سفارشات در انتظار تایید", callback_data="adm_pending_orders")],
         [InlineKeyboardButton("📦 مدیریت و تغییر وضعیت سفارشات", callback_data="adm_manage_orders")],
         [InlineKeyboardButton("🔄 همگام‌سازی گالری عکس‌ها", callback_data="adm_sync_photos")],
+        [InlineKeyboardButton("🗑 پاکسازی و ریست کل عکس‌ها", callback_data="adm_clear_photos_ask")],
         [InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="back_to_main")]
     ])
     if update.callback_query:
@@ -105,6 +106,83 @@ async def sync_photos_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.callback_query.message.reply_text(msg, parse_mode="HTML")
     else:
         await update.message.reply_text(msg, parse_mode="HTML")
+
+async def setphoto_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دستور مدیریت برای اتصال مستقیم و تایید عکس یا آلبوم برای هر کالا"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "📸 <b>راهنمای ثبت دستی تصویر کالا:</b>\n\n"
+            "جهت ثبت تصویر یا آلبوم برای هر کالا، دستور را به صورت زیر وارد فرمایید:\n"
+            "<code>/setphoto [کد_محصول]</code>\n\n"
+            "مثال:\n"
+            "<code>/setphoto 68798</code>\n\n"
+            "سپس ربات منتظر دریافت عکس، فوروارد از کانال یا ارسال شماره پست می‌ماند.",
+            parse_mode="HTML"
+        )
+        return
+
+    pid = str(args[0]).strip()
+    from photo_service import VERIFIED_PRODUCT_PHOTOS
+
+    # بررسی نام محصول از کاتالوگ در صورت امکان
+    pname = f"کالای {pid}"
+    try:
+        from bot import JSON_PRODUCTS
+        prod = next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == pid), None)
+        if prod and prod.get("name"):
+            pname = prod["name"]
+    except Exception:
+        pass
+
+    context.user_data["awaiting_product_image_link"] = {
+        "pid": pid,
+        "target_uid": 0,
+        "product_name": pname
+    }
+
+    await update.message.reply_text(
+        f"📸 <b>ثبت تصاویر تایید شده برای محصول:</b>\n"
+        f"🌟 <b>{pname}</b> (کد: <code>{pid}</code>)\n\n"
+        f"لطفاً همین الان <b>عکس‌ها را ارسال فرمایید</b> یا <b>پست کانال را فوروارد کنید</b> یا <b>شماره پست کانال</b> (مانند <code>452</code>) را بفرستید.\n\n"
+        f"❌ جهت انصراف: /cancel",
+        parse_mode="HTML"
+    )
+
+async def clearphotos_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دستور ادمین برای تایید و پاکسازی کامل لیست عکس‌های تستی"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ بله، تمامی عکس‌ها پاک شوند", callback_data="adm_clear_photos_do")
+        ],
+        [
+            InlineKeyboardButton("🔙 انصراف و بازگشت به پنل", callback_data="adm_back_panel")
+        ]
+    ])
+    msg = (
+        "⚠️ <b>هشدار پاکسازی کل تصاویر و کش محصولات:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "آیا مایلید <b>تمامی عکس‌های تستی و آرشیو موجود</b> برای محصولات را حذف نمایید؟\n\n"
+        "این عمل موارد زیر را پاکسازی می‌کند:\n"
+        "▫️ کلیه تصاویر تایید شده دستی پیشین\n"
+        "▫️ کش تصاویر و ارتباطات تستی قبلی\n\n"
+        "🎯 <i>پس از پاکسازی، تنها تصاویری که از این به بعد در کانال رسمی عکس قرار دهید یا با دستور <code>/setphoto</code> اضافه کنید، برای محصولات نمایش داده می‌شوند.</i>"
+    )
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(msg, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(msg, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(msg, reply_markup=kb, parse_mode="HTML")
 
 # ─── پردازش ثبت لینک و عکس توسط ادمین ───
 
@@ -240,19 +318,10 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
                     if sm not in final_msg_ids:
                         final_msg_ids.append(sm)
 
-    # ۴. اگر هنوز تک‌عکس بود و کانال متعلق به ربات است، پویش با forward_message با مدیریت ایمن خطا
-    if len(final_msg_ids) <= 1 and len(final_file_ids) <= 1 and channel and final_msg_ids:
-        target_mid = final_msg_ids[0]
+    # ۴. پویش تکمیلی از طریق فوروارد با مدیریت ایمن خطا (جهت استخراج تمام عکس‌های آلبوم)
+    if channel and final_msg_ids and len(final_file_ids) < max(len(final_msg_ids), 2):
         probed_msgs = []
         try:
-            logger.info(f"🔍 Probing sequential album messages in {channel} around message {target_mid} bidirectionally...")
-            fwd_target = await context.bot.forward_message(
-                chat_id=update.effective_chat.id,
-                from_chat_id=channel,
-                message_id=target_mid
-            )
-            probed_msgs.append(fwd_target.message_id)
-
             def get_msg_orig_date(msg):
                 if getattr(msg, 'forward_origin', None) and hasattr(msg.forward_origin, 'date'):
                     return msg.forward_origin.date
@@ -260,59 +329,103 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
                     return msg.forward_date
                 return None
 
-            base_orig_date = get_msg_orig_date(fwd_target)
-
-            if fwd_target.photo:
-                tfid = fwd_target.photo[-1].file_id
-                if tfid not in final_file_ids:
-                    final_file_ids.append(tfid)
-
-            if fwd_target.photo and base_orig_date:
-                # پویش پیام‌های قبلی آلبوم (عقب‌گرد: target_mid - 1 تا target_mid - 6)
-                for prev_id in range(target_mid - 1, max(1, target_mid - 6), -1):
+            # الف) اگر چندین شماره پیام وارد شده باشد (مثلاً رنج 452-455)، عکس تک‌تک آن‌ها استخراج شود
+            if len(final_msg_ids) > 1:
+                logger.info(f"🔍 Fetching photos for specified message IDs {final_msg_ids} via forward...")
+                for mid in final_msg_ids:
                     try:
-                        prev_fwd = await context.bot.forward_message(
+                        fwd = await context.bot.forward_message(
                             chat_id=update.effective_chat.id,
                             from_chat_id=channel,
-                            message_id=prev_id
+                            message_id=mid
                         )
-                        probed_msgs.append(prev_fwd.message_id)
-                        prev_orig_date = get_msg_orig_date(prev_fwd)
+                        probed_msgs.append(fwd.message_id)
+                        if fwd.photo:
+                            tfid = fwd.photo[-1].file_id
+                            if tfid not in final_file_ids:
+                                final_file_ids.append(tfid)
+                    except Exception as ex:
+                        logger.debug(f"Could not forward msg {mid}: {ex}")
 
-                        if prev_fwd.photo and prev_orig_date and abs((prev_orig_date - base_orig_date).total_seconds()) <= 2:
-                            logger.info(f"   ➕ Discovered album photo at previous msg_id {prev_id}")
-                            if prev_id not in final_msg_ids:
-                                final_msg_ids.append(prev_id)
-                            pfid = prev_fwd.photo[-1].file_id
-                            if pfid not in final_file_ids:
-                                final_file_ids.append(pfid)
-                        else:
+            # ب) اگر تک‌شماره وارد شده، پیام‌های مجاور (آلبوم چندتایی) پویش شوند
+            elif len(final_msg_ids) == 1:
+                target_mid = final_msg_ids[0]
+                logger.info(f"🔍 Probing sequential album messages in {channel} around message {target_mid} bidirectionally...")
+                fwd_target = await context.bot.forward_message(
+                    chat_id=update.effective_chat.id,
+                    from_chat_id=channel,
+                    message_id=target_mid
+                )
+                probed_msgs.append(fwd_target.message_id)
+
+                base_orig_date = get_msg_orig_date(fwd_target)
+                base_mg_id = getattr(fwd_target, 'media_group_id', None)
+
+                if fwd_target.photo:
+                    tfid = fwd_target.photo[-1].file_id
+                    if tfid not in final_file_ids:
+                        final_file_ids.append(tfid)
+
+                if fwd_target.photo:
+                    # پویش عقب‌گرد پیام‌های قبلی آلبوم (target_mid - 1 تا target_mid - 10)
+                    for prev_id in range(target_mid - 1, max(1, target_mid - 10), -1):
+                        try:
+                            prev_fwd = await context.bot.forward_message(
+                                chat_id=update.effective_chat.id,
+                                from_chat_id=channel,
+                                message_id=prev_id
+                            )
+                            probed_msgs.append(prev_fwd.message_id)
+                            prev_orig_date = get_msg_orig_date(prev_fwd)
+                            prev_mg_id = getattr(prev_fwd, 'media_group_id', None)
+
+                            is_album_match = False
+                            if base_mg_id and prev_mg_id and base_mg_id == prev_mg_id:
+                                is_album_match = True
+                            elif prev_fwd.photo and prev_orig_date and base_orig_date and abs((prev_orig_date - base_orig_date).total_seconds()) <= 4:
+                                is_album_match = True
+
+                            if prev_fwd.photo and is_album_match:
+                                logger.info(f"   ➕ Discovered album photo at previous msg_id {prev_id}")
+                                if prev_id not in final_msg_ids:
+                                    final_msg_ids.append(prev_id)
+                                pfid = prev_fwd.photo[-1].file_id
+                                if pfid not in final_file_ids:
+                                    final_file_ids.append(pfid)
+                            else:
+                                break
+                        except Exception:
                             break
-                    except Exception:
-                        break
 
-                # پویش پیام‌های بعدی آلبوم (پیش‌رو: target_mid + 1 تا target_mid + 6)
-                for next_id in range(target_mid + 1, target_mid + 6):
-                    try:
-                        next_fwd = await context.bot.forward_message(
-                            chat_id=update.effective_chat.id,
-                            from_chat_id=channel,
-                            message_id=next_id
-                        )
-                        probed_msgs.append(next_fwd.message_id)
-                        next_orig_date = get_msg_orig_date(next_fwd)
+                    # پویش پیش‌رو پیام‌های بعدی آلبوم (target_mid + 1 تا target_mid + 10)
+                    for next_id in range(target_mid + 1, target_mid + 10):
+                        try:
+                            next_fwd = await context.bot.forward_message(
+                                chat_id=update.effective_chat.id,
+                                from_chat_id=channel,
+                                message_id=next_id
+                            )
+                            probed_msgs.append(next_fwd.message_id)
+                            next_orig_date = get_msg_orig_date(next_fwd)
+                            next_mg_id = getattr(next_fwd, 'media_group_id', None)
 
-                        if next_fwd.photo and next_orig_date and abs((next_orig_date - base_orig_date).total_seconds()) <= 2:
-                            logger.info(f"   ➕ Discovered album photo at next msg_id {next_id}")
-                            if next_id not in final_msg_ids:
-                                final_msg_ids.append(next_id)
-                            nfid = next_fwd.photo[-1].file_id
-                            if nfid not in final_file_ids:
-                                final_file_ids.append(nfid)
-                        else:
+                            is_album_match = False
+                            if base_mg_id and next_mg_id and base_mg_id == next_mg_id:
+                                is_album_match = True
+                            elif next_fwd.photo and next_orig_date and base_orig_date and abs((next_orig_date - base_orig_date).total_seconds()) <= 4:
+                                is_album_match = True
+
+                            if next_fwd.photo and is_album_match:
+                                logger.info(f"   ➕ Discovered album photo at next msg_id {next_id}")
+                                if next_id not in final_msg_ids:
+                                    final_msg_ids.append(next_id)
+                                nfid = next_fwd.photo[-1].file_id
+                                if nfid not in final_file_ids:
+                                    final_file_ids.append(nfid)
+                            else:
+                                break
+                        except Exception:
                             break
-                    except Exception:
-                        break
 
         except Exception as e:
             logger.info(f"Forward probe skipped or not supported for channel {channel}: {e}")

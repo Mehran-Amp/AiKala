@@ -42,6 +42,45 @@ BRAND_SYNONYMS: Dict[str, List[str]] = {
     "دلونگی": ["دلونگی", "delonghi"],
     "براون": ["براون", "braun"],
     "کنوود": ["کنوود", "kenwood"],
+    "نوتریکوک": ["نوتریکوک", "nutricook"],
+    "نینجا": ["نینجا", "ninja"],
+    "میگل": ["میگل", "migel"],
+    "گوسونیک": ["گوسونیک", "gosonic", "گاسونیک"],
+    "فلر": ["فلر", "feller"],
+    "اسمگ": ["اسمگ", "smeg"],
+    "روگن": ["روگن", "rugen"],
+    "هنریچ": ["هنریچ", "heinrich", "heinrichs"],
+    "سنکور": ["سنکور", "sencor"],
+    "بلک اند دکر": ["بلک اند دکر", "black and decker", "black+decker", "black & decker"],
+    "مولینکس": ["مولینکس", "moulinex"],
+    "پارس خزر": ["پارس خزر", "pars khazar"],
+    "بکو": ["بکو", "beko"],
+    "ویرپول": ["ویرپول", "whirlpool"],
+    "بیسل": ["بیسل", "bissell"],
+    "روونتا": ["روونتا", "rowenta"],
+    "کیچن اید": ["کیچن اید", "kitchenaid"],
+    "عرشیا": ["عرشیا", "arshia"],
+    "فوما": ["فوما", "fuma"],
+    "فکیر": ["فکیر", "fakir", "فکر"],
+    "ژانومه": ["ژانومه", "janome"],
+    "آاگ": ["آاگ", "آ ا گ", "aeg"],
+    "میله": ["میله", "miele"],
+    "دایسون": ["دایسون", "dyson"],
+    "کارچر": ["کارچر", "کرشر", "karcher"],
+    "مباشی": ["مباشی", "mebashi"],
+    "نوا": ["نوا", "nova"],
+    "زیگما": ["زیگما", "zigma"],
+    "باریتون": ["باریتون", "bariton"],
+    "هاردستون": ["هاردستون", "hardstone"],
+    "مورفی ریچاردز": ["مورفی ریچاردز", "morphy richards"],
+    "جیپاس": ["جیپاس", "geepas"],
+    "کرکماز": ["کرکماز", "korkmaz"],
+    "برویل": ["برویل", "breville"],
+    "گاسترو بک": ["گاسترو بک", "گاستروبک", "gastroback"],
+    "مایر": ["مایر", "maier"],
+    "سیلور کرست": ["سیلور کرست", "سیلورکرست", "silvercrest"],
+    "بایترون": ["بایترون", "bitron"],
+    "تکنو": ["تکنو", "tecno"],
 }
 
 CATEGORY_SYNONYMS: Dict[str, List[str]] = {
@@ -130,6 +169,62 @@ def extract_brand_from_text(text: str) -> str:
         if any(s in t_clean for s in syns):
             return brand
     return ""
+
+INVALID_BRAND_WORDS = {
+    "ساز", "کن", "برقی", "بدون", "روغن", "پز", "گیر", "دستی", "شارژی", "خانگی",
+    "سایر", "ریز", "نامشخص", "لوازم", "مدل", "سماوری", "کاسه", "دار", "اصل", "اصلی",
+    "جدید", "هوشمند", "دیجیتال", "لمسی", "پایه", "چند", "کاره", "چندکاره", "مخزن"
+}
+
+APPLIANCE_PREFIXES = [
+    "بستنی ساز", "چای ساز", "چایی ساز", "قهوه ساز", "اسپرسو ساز", "اسپرسوساز",
+    "سرخ کن بدون روغن", "سرخ کن", "مخلوط کن", "خرد کن", "خردکن", "همزن برقی", "همزن کاسه دار", "همزن",
+    "آبمیوه گیری", "آبلیمو گیری", "جارو برقی", "جاروبرقی", "جارو شارژی", "جاروشارژی", "بخار شوی", "بخارشوی",
+    "پلوپز", "زودپز", "آرام پز", "هواپز", "ساندویچ ساز", "وافل ساز", "توستر", "نان پز",
+    "آسیاب برقی", "آسیاب", "چرخ گوشت", "غذاساز", "میوه خشک کن", "اتو بخار", "اتو مخزن دار", "اتو پرسی", "اتو دستی", "اتو",
+    "سشوار", "ریش تراش", "ماشین اصلاح", "پیتزاپز", "گریل", "باربیکیو", "تصفیه آب", "تصفیه هوا",
+    "پنکه", "بخاری", "شوفاژ", "هیتر", "کتری برقی", "کتری", "سماور برقی", "سماور"
+]
+
+def detect_product_brand(name: str, fallback_brand: str = "") -> str:
+    """استخراج و اعتبارسنجی دقیق برند محصول، جلوگیری از برندهای اشتباه مثل 'ساز' یا 'کن'"""
+    # ۱. بررسی با دیکشنری مترادف‌های برند روی نام محصول
+    extracted = extract_brand_from_text(name)
+    if extracted:
+        return extracted
+
+    # اگر برند کنونی معتبر باشد و جزء کلمات نامعتبر نباشد
+    clean_fallback = fallback_brand.strip() if fallback_brand else ""
+    if clean_fallback and clean_fallback not in INVALID_BRAND_WORDS and len(clean_fallback) > 1:
+        extracted_fb = extract_brand_from_text(clean_fallback)
+        if extracted_fb:
+            return extracted_fb
+        return clean_fallback
+
+    # ۲. استخراج بر اساس الگوهای عنوان فارسی (حذف پیشوند کالا مانند 'بستنی ساز' و برداشتن کلمه بعد)
+    t = name.strip()
+    for prefix in sorted(APPLIANCE_PREFIXES, key=len, reverse=True):
+        if t.startswith(prefix):
+            remainder = t[len(prefix):].strip()
+            tokens = remainder.split()
+            for token in tokens:
+                clean_tok = token.strip(" ,.-_()،")
+                if clean_tok and clean_tok not in INVALID_BRAND_WORDS and len(clean_tok) > 1:
+                    if not re.match(r'^[0-9a-zA-Z\-_]+$', clean_tok):
+                        return clean_tok
+                    elif clean_tok.isalpha() and len(clean_tok) > 2:
+                        return clean_tok.capitalize()
+            break
+
+    # ۳. پیمایش توکن‌های عنوان برای یافتن اولین کلمه‌ای که مشخصه نامعتبر نباشد
+    tokens = t.split()
+    for token in tokens[1:]:
+        clean_tok = token.strip(" ,.-_()،")
+        if clean_tok and clean_tok not in INVALID_BRAND_WORDS and len(clean_tok) > 1:
+            if not re.match(r'^[0-9]+$', clean_tok):
+                return clean_tok
+
+    return clean_fallback if (clean_fallback and clean_fallback not in INVALID_BRAND_WORDS) else "اورجینال شرکتی"
 
 def normalize_brand(brand_str: str) -> str:
     if not brand_str:

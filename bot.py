@@ -88,6 +88,8 @@ from order_flow import (
 from admin_panel import (
     admin_panel_command,
     sync_photos_command,
+    setphoto_command,
+    clearphotos_command,
     handle_admin_photo_link_input
 )
 from order_tracking import (
@@ -811,20 +813,60 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back_panel")]
         ])
         if not VERIFIED_PRODUCT_PHOTOS:
-            empty_msg = "📸 در حال حاضر هیچ تصویری به صورت دستی ثبت نشده است."
+            empty_msg = (
+                "📸 <b>لیست تصاویر تایید شده محصولات:</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "در حال حاضر هیچ تصویری به صورت دستی تایید یا ثبت نشده است.\n\n"
+                "💡 <b>چگونه تصویر تایید شده ثبت کنیم؟</b>\n"
+                "۱. <b>روش مستقیم:</b> با ارسال دستور زیر:\n"
+                "<code>/setphoto [کد_محصول]</code> (مثال: <code>/setphoto 68798</code>)\n\n"
+                "۲. <b>روش خودکار:</b> هرگاه کاربری روی «📸 تصاویر محصول» کالایی بزند و تصویری در کانال نباشد، "
+                "یک دکمه «ثبت عکس» به صورت اختصاصی برای ادمین ارسال می‌شود تا با یک کلیک و ارسال عکس/لینک آن را تایید کند."
+            )
             try:
                 await query.edit_message_text(empty_msg, reply_markup=kb, parse_mode="HTML")
             except Exception:
                 await query.message.reply_text(empty_msg, reply_markup=kb, parse_mode="HTML")
         else:
-            lines = [f"📸 <b>لیست تصاویر تایید شده ({len(VERIFIED_PRODUCT_PHOTOS)} محصول):</b>\n"]
-            for pid_item, val in list(VERIFIED_PRODUCT_PHOTOS.items())[-15:]:
-                lines.append(f"▫️ <b>{val.get('product_name', pid_item)}</b>\n  کد: <code>{pid_item}</code> | مرجع: {val.get('link') or val.get('message_ids')}")
-            lines.append("\n✨ <i>تصاویر این محصولات به صورت ۱۰۰٪ خودکار برای متقاضیان ارسال می‌شود.</i>")
+            lines = [
+                f"📸 <b>لیست تصاویر تایید شده ({len(VERIFIED_PRODUCT_PHOTOS)} محصول):</b>\n",
+                "━━━━━━━━━━━━━━━━━━━━\n"
+            ]
+            for pid_item, val in list(VERIFIED_PRODUCT_PHOTOS.items())[-20:]:
+                p_link = val.get('link') or val.get('message_ids') or "فایل مستقیم"
+                lines.append(f"▫️ <b>{val.get('product_name', pid_item)}</b>\n  کد: <code>{pid_item}</code> | مرجع: <code>{p_link}</code>")
+            lines.append("\n💡 <i>جهت افزودن یا تغییر تصویر هر محصول، از دستور <code>/setphoto [کد]</code> استفاده نمایید.</i>")
             try:
                 await query.edit_message_text("\n".join(lines), reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
             except Exception:
                 await query.message.reply_text("\n".join(lines), reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
+
+    elif data == "adm_clear_photos_ask":
+        await query.answer()
+        await clearphotos_command(update, context)
+
+    elif data == "adm_clear_photos_do":
+        await query.answer("در حال پاکسازی لیست تصاویر...", show_alert=False)
+        from photo_service import clear_all_product_photos
+        stats = clear_all_product_photos()
+        v_count = stats.get("verified_count", 0)
+        p_count = stats.get("posts_count", 0)
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+        ])
+        msg = (
+            f"✅ <b>تمامی تصاویر تستی و کش قبلی با موفقیت پاکسازی شدند!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"▫️ تعداد تصاویر تایید شده دستی حذف‌شده: <b>{v_count}</b> مورد\n"
+            f"▫️ تعداد پست‌های ایندکس‌شده تستی کانال: <b>{p_count}</b> پست\n\n"
+            f"✨ <b>از این پس:</b>\n"
+            f"سیستم کاملاً آماده و تمیز است تا فقط تصاویر واقعی محصولات که در کانال عکس‌ها قرار می‌گیرند یا با دستور <code>/setphoto</code> متصل می‌شوند، برای مشتریان ارسال گردند."
+        )
+        try:
+            await query.edit_message_text(msg, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await query.message.reply_text(msg, reply_markup=kb, parse_mode="HTML")
 
     elif data == "back_to_main":
         await query.answer()
@@ -877,113 +919,24 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             if success:
                 return
 
-        # ۲. بررسی آلبوم‌های موجود در آرشیو گالری کانال
-        photos, note = get_product_photos(prod) if prod else ([], None)
-        if photos:
-            await query.answer("📸 در حال ارسال تصاویر آلبوم محصول...")
-            header_msg = (
-                f"📸 <b>تصاویر اختصاصی کالا:</b>\n"
-                f"🌟 <b>{pname}</b>"
+        # ۲. در غیر این صورت -> ثبت درخواست، ارسال پیام اطلاع به کاربر و ارسال فوری نوتیفیکیشن به ادمین
+        await query.answer("درخواست شما برای مشاهده تصاویر کالا ثبت شد", show_alert=True)
+
+        user_req_text = (
+            f"📸 <b>درخواست تصاویر واقعی کالا:</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 <b>محصول:</b> <b>{pname}</b>\n\n"
+            f"⏳ درخواست شما برای مشاهده تصاویر واقعی و مستند این کالا با موفقیت ثبت و به واحد پشتیبانی ارجاع گردید.\n"
+            f"به محض ثبت تصاویر توسط همکاران ما، آلبوم تصاویر به صورت خودکار در همین گفتگو برای شما ارسال خواهد شد."
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=user_req_text,
+                parse_mode="HTML"
             )
-            if note:
-                header_msg += f"\n\n{note}"
-
-            num_ids = [int(p) for p in photos if str(p).isdigit()]
-            file_ids = [p for p in photos if not str(p).isdigit()]
-
-            sent = False
-            if num_ids:
-                if len(num_ids) == 1:
-                    try:
-                        await context.bot.copy_message(
-                            chat_id=query.message.chat_id,
-                            from_chat_id=PHOTOS_CHANNEL,
-                            message_id=num_ids[0],
-                            caption=header_msg,
-                            parse_mode="HTML"
-                        )
-                        sent = True
-                    except Exception as e:
-                        logger.warning(f"Failed copy_message in req_img: {e}")
-                else:
-                    if hasattr(context.bot, "copy_messages"):
-                        try:
-                            await context.bot.copy_messages(
-                                chat_id=query.message.chat_id,
-                                from_chat_id=PHOTOS_CHANNEL,
-                                message_ids=num_ids[:10]
-                            )
-                            sent = True
-                        except Exception as e:
-                            logger.warning(f"Failed copy_messages in req_img: {e}")
-
-                    # در صورت عدم پشتیبانی copy_messages، ارسال متوالی
-                    if not sent:
-                        for idx, nid in enumerate(num_ids[:10]):
-                            try:
-                                cap = header_msg if idx == 0 else ""
-                                await context.bot.copy_message(
-                                    chat_id=query.message.chat_id,
-                                    from_chat_id=PHOTOS_CHANNEL,
-                                    message_id=nid,
-                                    caption=cap,
-                                    parse_mode="HTML"
-                                )
-                                sent = True
-                            except Exception as e:
-                                logger.warning(f"Failed sequential copy_message for {nid} in req_img: {e}")
-
-            if not sent and (file_ids or photos):
-                all_fids = file_ids if file_ids else photos
-                try:
-                    resolved_items = await prepare_media_items(all_fids[:10])
-                    if len(resolved_items) == 1:
-                        m_obj, orig_url = resolved_items[0]
-                        if hasattr(m_obj, "seek"):
-                            m_obj.seek(0)
-                        msg_sent = await context.bot.send_photo(chat_id=query.message.chat_id, photo=m_obj, caption=header_msg, parse_mode="HTML")
-                        sent = True
-                        if msg_sent.photo and orig_url is not None:
-                            file_ids = [msg_sent.photo[-1].file_id]
-                    elif len(resolved_items) > 1:
-                        media = []
-                        for i, (m_obj, _) in enumerate(resolved_items):
-                            if hasattr(m_obj, "seek"):
-                                m_obj.seek(0)
-                            media.append(InputMediaPhoto(media=m_obj, filename=f"photo_{i}.jpg", caption=header_msg if i == 0 else "", parse_mode="HTML"))
-                        sent_msgs = await context.bot.send_media_group(chat_id=query.message.chat_id, media=media)
-                        sent = True
-                        new_fids = [m.photo[-1].file_id for m in sent_msgs if m.photo]
-                        if new_fids:
-                            file_ids = new_fids
-                except Exception as e:
-                    logger.warning(f"Failed send_media_group in req_img: {e}. Fallback to sequential send_photo...")
-                    for idx, fid in enumerate(all_fids[:10]):
-                        try:
-                            m_obj, orig_url = await resolve_media_for_telegram(fid)
-                            if not m_obj:
-                                continue
-                            if hasattr(m_obj, "seek"):
-                                m_obj.seek(0)
-                            cap = header_msg if idx == 0 else ""
-                            msg_sent = await context.bot.send_photo(chat_id=query.message.chat_id, photo=m_obj, caption=cap, parse_mode="HTML")
-                            sent = True
-                        except Exception as ex2:
-                            logger.warning(f"Failed sequential send_photo in req_img: {ex2}")
-
-            if sent:
-                VERIFIED_PRODUCT_PHOTOS[pid] = {
-                    "channel": PHOTOS_CHANNEL,
-                    "message_ids": num_ids,
-                    "file_ids": file_ids,
-                    "product_name": pname,
-                    "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M")
-                }
-                save_verified_photos()
-                return
-
-        # ۳. اگر عکسی در آرشیو نبود -> ثبت در لیست انتظار و اطلاع به ادمین
-        await query.answer("درخواست شما به واحد تامین تصاویر ارسال شد", show_alert=True)
+        except Exception as e:
+            logger.warning(f"Could not send waiting confirmation to user: {e}")
 
         if pid not in PENDING_IMAGE_REQUESTS:
             PENDING_IMAGE_REQUESTS[pid] = []
@@ -995,12 +948,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("🔗 ثبت و ارسال لینک تصاویر", callback_data=admin_cb)]
         ])
         admin_alert = (
-            f"🔔 <b>درخواست تصاویر جدید محصول</b>\n\n"
+            f"🔔 <b>درخواست جدید تصاویر محصول از سوی مشتری</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📦 <b>نام کالا:</b> {pname}\n"
             f"🏷 <b>کد محصول:</b> <code>{pid}</code>\n"
             f"👤 <b>متقاضی:</b> {user.full_name} (@{user.username or 'ندارد'})\n"
             f"🆔 <b>شناسه کاربر:</b> <code>{user.id}</code>\n\n"
-            f"👇 <i>جهت ارسال تصاویر این کالا و ذخیره در سیستم، دکمه زیر را لمس فرمایید:</i>"
+            f"👇 <i>جهت ارسال تصاویر این کالا، دکمه زیر را لمس کرده و لینک پست، شماره پیام یا عکس‌های کانال را بفرستید:</i>"
         )
         for adm_id in ADMIN_IDS:
             try:
@@ -1138,6 +1092,8 @@ def main():
     app.add_handler(CommandHandler("support", support_command))
     app.add_handler(CommandHandler("track", track_order_command))
     app.add_handler(CommandHandler("sync_photos", sync_photos_command))
+    app.add_handler(CommandHandler("setphoto", setphoto_command))
+    app.add_handler(CommandHandler("clearphotos", clearphotos_command))
     app.add_handler(CommandHandler("admin", admin_panel_command))
 
     # شنونده کانال تصاویر

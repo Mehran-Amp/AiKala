@@ -109,7 +109,13 @@ from guidbuy import help_menu_keyboard, guide_section_keyboard
 
 def build_boxed_product_message(p: Dict[str, Any]) -> str:
     name = p.get("name", "محصول بدون نام")
-    brand = p.get("brand", "نامشخص")
+    raw_brand = p.get("brand", "")
+    try:
+        from search_engine import detect_product_brand
+        brand = detect_product_brand(name, raw_brand)
+    except Exception:
+        brand = raw_brand if raw_brand and raw_brand not in ["ساز", "کن", "برقی", "بدون", "شارژی"] else "اورجینال شرکتی"
+
     category = p.get("category") or p.get("category_name") or "لوازم خانگی"
     raw_price = p.get("price", 0)
 

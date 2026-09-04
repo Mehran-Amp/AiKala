@@ -17,8 +17,13 @@ import io
 import urllib.request
 from typing import Optional, List, Dict, Any, Tuple
 
-from telegram import InputMediaPhoto
-from telegram.ext import ContextTypes
+try:
+    from telegram import InputMediaPhoto
+    from telegram.ext import ContextTypes
+except ImportError:
+    InputMediaPhoto = object
+    class ContextTypes:
+        DEFAULT_TYPE = Any
 
 try:
     import config
@@ -77,6 +82,15 @@ def save_verified_photos():
     except Exception as e:
         logger.error(f"Error saving verified photos: {e}")
 
+def clear_verified_photos() -> int:
+    """پاکسازی کامل تمامی تصاویر تایید شده دستی برای محصولات"""
+    global VERIFIED_PRODUCT_PHOTOS
+    count = len(VERIFIED_PRODUCT_PHOTOS)
+    VERIFIED_PRODUCT_PHOTOS.clear()
+    save_verified_photos()
+    logger.info(f"🗑 [PHOTOS] Cleared {count} verified product photos.")
+    return count
+
 load_verified_photos()
 
 # ─── ذخیره و بازیابی نقشه تصاویر کانال ───
@@ -122,6 +136,28 @@ def save_channel_photos_map():
             }, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Error saving photos map: {e}")
+
+def clear_channel_photos_cache() -> Tuple[int, int]:
+    """پاکسازی کامل کش عکس‌های کانال و متادیتاهای تست"""
+    global CHANNEL_PHOTOS_MAP, CHANNEL_POSTS_METADATA, CHANNEL_MEDIA_GROUPS
+    posts_count = len(CHANNEL_POSTS_METADATA)
+    keys_count = len(CHANNEL_PHOTOS_MAP)
+    CHANNEL_PHOTOS_MAP.clear()
+    CHANNEL_POSTS_METADATA.clear()
+    CHANNEL_MEDIA_GROUPS.clear()
+    save_channel_photos_map()
+    logger.info(f"🗑 [PHOTOS] Cleared {posts_count} posts and {keys_count} model keys from channel photos cache.")
+    return posts_count, keys_count
+
+def clear_all_product_photos() -> Dict[str, int]:
+    """پاکسازی کامل هم تصاویر تایید شده و هم کش عکس‌های کانال"""
+    v_count = clear_verified_photos()
+    p_count, k_count = clear_channel_photos_cache()
+    return {
+        "verified_count": v_count,
+        "posts_count": p_count,
+        "keys_count": k_count
+    }
 
 load_channel_photos_map()
 
@@ -178,17 +214,29 @@ def parse_telegram_post_link(text: str) -> Optional[Tuple[str, List[int]]]:
     استخراج نام کانال و شماره پیام‌ها از لینک، متن یا آیدی پست تلگرام
     پشتیبانی از:
     - https://t.me/Aikala_Image/452
-    - https://t.me/bazargani_faghihzadeh/10461
-    - https://t.me/bazargani_faghihzadeh/10461-10465
-    - 452-455 یا 452 تا 455
-    - تک شماره 452 یا چند شماره با کاما
+    - https://t.me/Aikala_Image/452-455 یا 452/455
+    - لینک کانال‌های خصوصی: https://t.me/c/2471649987/452
+    - رنج عددی: 452-455 یا 452 تا 455
+    - شماره تک: 452 یا چند شماره با کاما یا فاصله
     """
     if not text:
         return None
     t = text.strip()
 
-    # ۱. لینک مستقیم تلگرام با یا بدون رنج
-    link_match = re.search(r't(?:elegram)?\.me/([a-zA-Z0-9_]+)/(\d+)(?:\s*(?:-|–|_|to|تا)\s*(\d+))?', t)
+    # ۱. لینک کانال خصوصی تلگرام با پیشوند c/
+    c_match = re.search(r't(?:elegram)?\.me/c/(\d+)/(\d+)(?:\s*(?:-|–|_|to|تا|/)\s*(\d+))?', t)
+    if c_match:
+        c_id = c_match.group(1)
+        channel = f"-100{c_id}" if not c_id.startswith("-100") else c_id
+        start_id = int(c_match.group(2))
+        if c_match.group(3):
+            end_id = int(c_match.group(3))
+            if 0 < end_id - start_id <= 20:
+                return channel, list(range(start_id, end_id + 1))
+        return channel, [start_id]
+
+    # ۲. لینک عمومی تلگرام با یا بدون رنج
+    link_match = re.search(r't(?:elegram)?\.me/(?!c/)([a-zA-Z0-9_]+)/(\d+)(?:\s*(?:-|–|_|to|تا|/)\s*(\d+))?', t)
     if link_match:
         ch = link_match.group(1)
         channel = f"@{ch}" if not ch.startswith("@") else ch
@@ -199,15 +247,15 @@ def parse_telegram_post_link(text: str) -> Optional[Tuple[str, List[int]]]:
                 return channel, list(range(start_id, end_id + 1))
         return channel, [start_id]
 
-    # ۲. رنج عددی مثل 452-455 یا 452 تا 455 یا 452 to 455
-    range_match = re.search(r'(\d+)\s*(?:-|–|_|to|تا)\s*(\d+)', t, re.IGNORECASE)
+    # ۳. رنج عددی مثل 452-455 یا 452 تا 455 یا 452 to 455
+    range_match = re.search(r'(\d+)\s*(?:-|–|_|to|تا|/)\s*(\d+)', t, re.IGNORECASE)
     if range_match:
         start_id = int(range_match.group(1))
         end_id = int(range_match.group(2))
         if 0 < end_id - start_id <= 20:
             return PHOTOS_CHANNEL, list(range(start_id, end_id + 1))
 
-    # ۳. اگر فقط اعداد پیام‌ها وارد شده بود (مثلاً 452 یا 452, 453)
+    # ۴. اگر فقط اعداد پیام‌ها وارد شده بود (مثلاً 452 یا 452, 453)
     nums = [int(x) for x in re.findall(r'\b\d+\b', t) if 1 <= len(x) <= 8]
     if nums and len(nums) <= 15:
         return PHOTOS_CHANNEL, nums
@@ -266,8 +314,8 @@ async def probe_telegram_channel_album(channel_name: str, base_mid: int) -> Tupl
     
     # ۲. اگر در پیام مبنا فقط ۱ عکس یا کمتر یافت شد، پیام‌های قبل و بعد را پویش می‌کنیم
     if len(discovered_photos) <= 1:
-        # الف) پویش عقب‌گرد (base_mid - 1 تا base_mid - 6)
-        for prev_id in range(base_mid - 1, max(1, base_mid - 6), -1):
+        # الف) پویش عقب‌گرد (base_mid - 1 تا base_mid - 10)
+        for prev_id in range(base_mid - 1, max(1, base_mid - 10), -1):
             p_photos = await scrape_telegram_embed_photos(channel_name, prev_id)
             if p_photos:
                 logger.info(f"   ➕ [PROBE] Discovered {len(p_photos)} photo(s) at previous msg {prev_id}")
@@ -279,8 +327,8 @@ async def probe_telegram_channel_album(channel_name: str, base_mid: int) -> Tupl
             else:
                 break
                 
-        # ب) پویش پیش‌رو (base_mid + 1 تا base_mid + 6)
-        for next_id in range(base_mid + 1, base_mid + 6):
+        # ب) پویش پیش‌رو (base_mid + 1 تا base_mid + 10)
+        for next_id in range(base_mid + 1, base_mid + 10):
             n_photos = await scrape_telegram_embed_photos(channel_name, next_id)
             if n_photos:
                 logger.info(f"   ➕ [PROBE] Discovered {len(n_photos)} photo(s) at next msg {next_id}")

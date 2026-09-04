@@ -67,8 +67,13 @@ COLOR_AND_STOPWORDS_REGEX = re.compile(
 )
 
 SYSTEM_PROMPT = (
-    "تو کارشناس فنی لوازم خانگی هستی. برای مدل کالا، ۳ یا ۴ ویژگی فنی و حیاتی (مانند توان، ظرفیت، کشور سازنده یا نوع موتور) استخراج کن. "
-    "خروجی را فقط به صورت خطوط 'عنوان: مقدار' بده. از نوشتن مقدمه، نتیجه‌گیری، بولت یا رنگ خودداری کن."
+    "تو کارشناس فنی لوازم خانگی هستی. برای محصول مشخص‌شده، ۳ یا ۴ ویژگی فنی و حیاتی (مانند توان، ظرفیت، کشور سازنده، نوع موتور یا جنس تیغه/بدنه) بنویس. "
+    "حتماً خروجی را خط به خط با فرمت 'عنوان: مقدار' بده.\n"
+    "مثال:\n"
+    "توان مصرفی: ۱۸۰۰ وات\n"
+    "ظرفیت: ۲ لیتر\n"
+    "کشور سازنده: آلمان\n"
+    "از نوشتن سلام، مقدمه، رنگ و قیمت خودداری کن."
 )
 
 def clean_product_name_for_ai(name: str) -> str:
@@ -78,13 +83,13 @@ def clean_product_name_for_ai(name: str) -> str:
     cleaned = COLOR_AND_STOPWORDS_REGEX.sub(" ", name)
     cleaned = re.sub(r'[\(\)\[\]،,\-_/]+', ' ', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-    return cleaned
+    return cleaned if len(cleaned) >= 3 else name.strip()
 
 def call_deepseek_api(api_key: str, product_name: str, base_url: str = DEFAULT_BASE_URL, model: str = DEFAULT_MODEL) -> Optional[Dict[str, str]]:
     """فراخوانی کم‌مصرف API دیپ‌سیک با مدل تعیین‌شده (پیش‌فرض: deepseek-v4-flash)"""
     cleaned_name = clean_product_name_for_ai(product_name)
     if not cleaned_name:
-        return None
+        cleaned_name = product_name.strip()
 
     if not model:
         model = DEFAULT_MODEL
@@ -135,11 +140,25 @@ def call_deepseek_api(api_key: str, product_name: str, base_url: str = DEFAULT_B
                 if after_think:
                     content = after_think
 
+            # پاکسازی بلوک‌های کد Markdown (مثل ```json ... ``` یا ```text ... ```)
+            if "```" in content:
+                m = re.search(r'```(?:json|text)?\s*([\s\S]*?)\s*```', content)
+                if m:
+                    extracted_code = m.group(1).strip()
+                    if extracted_code.startswith("{") and extracted_code.endswith("}"):
+                        try:
+                            parsed_json = json.loads(extracted_code)
+                            if isinstance(parsed_json, dict):
+                                return {str(k).strip(): str(v).strip() for k, v in parsed_json.items() if k and v}
+                        except Exception:
+                            pass
+                    content = extracted_code
+
             logger.info(f"📩 [DEEPSEEK RAW]:\n{content}")
             if not content:
                 logger.warning(f"⚠️ [DEEPSEEK CHOICE DUMP]: {choice}")
             
-            # ۱. بررسی اگر مدل خروجی JSON داده باشد
+            # ۱. بررسی اگر مدل خروجی مستقیم JSON داده باشد
             if content.startswith("{") and content.endswith("}"):
                 try:
                     parsed_json = json.loads(content)
@@ -151,22 +170,37 @@ def call_deepseek_api(api_key: str, product_name: str, base_url: str = DEFAULT_B
             # ۲. پارس کردن خروجی متنی با جداکننده‌های مختلف و پاکسازی مارک‌داون
             specs = {}
             for line in content.split("\n"):
-                line = line.strip().lstrip("-*▫️•# ")
+                line = line.strip()
                 if not line:
                     continue
+                # حذف شماره‌گذاری ابتدای سطر مانند '1. ' یا '۱- '
+                line = re.sub(r'^\s*[\d۰-۹]+[\.\-\)\s]+\s*', '', line)
+                # حذف بولت‌ها
+                line = line.lstrip("-*▫️•#▪️ ")
                 # تمیزکاری علامت‌های Bold و Markdown
                 clean_line = line.replace("**", "").replace("__", "").strip()
+                if not clean_line or len(clean_line) < 4:
+                    continue
                 
                 k, v = None, None
-                for sep in [":", "：", " - ", " – ", " = "]:
+                for sep in [":", "：", " - ", " – ", " — ", " = ", "|"]:
                     if sep in clean_line:
                         parts = clean_line.split(sep, 1)
                         k = parts[0].strip().lstrip("-*▫️• ")
                         v = parts[1].strip()
                         break
                 
+                # اگر جداکننده نداشت، بررسی عبارات کلیدی مشخصات در ابتدای سطر
+                if not k or not v:
+                    for common_key in ["توان مصرفی", "توان موتور", "توان", "ظرفیت مخزن", "ظرفیت", "گنجایش", "کشور سازنده", "کشور مبدا", "نوع موتور", "جنس بدنه", "جنس تیغه", "فشار بخار"]:
+                        if clean_line.startswith(common_key):
+                            k = common_key
+                            v = clean_line[len(common_key):].strip(" :：-–=")
+                            break
+
                 if k and v and len(k) < 35 and len(v) < 100:
-                    specs[k] = v
+                    if not any(stop in k for stop in ["رنگ", "قیمت", "خرید", "تومان", "گارانتی"]):
+                        specs[k] = v
 
             return specs if specs else None
     except urllib.error.HTTPError as e:
