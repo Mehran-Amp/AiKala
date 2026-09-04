@@ -6,9 +6,18 @@ bot_catalog.py
 و بدون نمایش تاریخ یا ساعت به‌روزرسانی قیمت.
 """
 
+import os
 import json
 import sqlite3
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Any
+
+try:
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+except ImportError:
+    InlineKeyboardButton = None
+    InlineKeyboardMarkup = None
+
+from keyboards import make_safe_cb, resolve_safe_cb
 
 DB_PATH = "bot_data.db"
 CATEGORIES_FILE = "categories_tree.json"
@@ -147,3 +156,162 @@ def get_product_by_id(pid: str) -> Optional[dict]:
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+# ─── سیستم ناوبری تعاملی و پویای دسته‌بندی‌ها ───
+
+def load_categories_tree() -> dict:
+    if os.path.exists(CATEGORIES_FILE):
+        try:
+            with open(CATEGORIES_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def get_main_categories_markup():
+    tree = load_categories_tree()
+    buttons = []
+    order = ["tv", "conditioner", "refrigerator", "washing_machine", "dishwasher", "small_appliances"]
+    row = []
+    for cat_key in order:
+        cat_data = tree.get(cat_key, {})
+        title = cat_data.get("title", cat_key)
+        pids = set()
+        for subk, subv in cat_data.items():
+            if isinstance(subv, dict):
+                for itemv in subv.values():
+                    if isinstance(itemv, list):
+                        pids.update(itemv)
+        count_str = f" ({len(pids)})" if pids else ""
+        cb = make_safe_cb("cat_m", cat_key)
+        row.append(InlineKeyboardButton(f"{title}{count_str}", callback_data=cb))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(buttons)
+
+def get_category_sub_markup(cat_key: str) -> Tuple[str, Any]:
+    tree = load_categories_tree()
+    cat_data = tree.get(cat_key, {})
+    title = cat_data.get("title", cat_key)
+    buttons = []
+
+    if cat_key == "small_appliances":
+        subcats = cat_data.get("subcategories", {})
+        row = []
+        for sub_name, pids in subcats.items():
+            count = len(pids) if isinstance(pids, list) else 0
+            btn_text = f"{sub_name} ({count})"
+            cb = make_safe_cb("cat_sub", f"{cat_key}:{sub_name}")
+            row.append(InlineKeyboardButton(btn_text, callback_data=cb))
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        buttons.append([
+            InlineKeyboardButton("📋 مشاهده همه کالاهای این دسته", callback_data=make_safe_cb("cat_all", cat_key)),
+            InlineKeyboardButton("🔙 بازگشت به دسته‌ها", callback_data="cat_back")
+        ])
+        msg_text = f"☕️ <b>زیرشاخه‌های {title}:</b>\nلطفاً گروه کالای مورد نظر را انتخاب نمایید:"
+        return msg_text, InlineKeyboardMarkup(buttons)
+
+    filter_labels = {
+        "brands": "🏷 بر اساس برند",
+        "sizes": "📏 بر اساس سایز",
+        "capacities": "⚡️ بر اساس ظرفیت",
+        "plans": "🚪 بر اساس نوع و طرح بدنه",
+        "types": "💨 بر اساس نوع دستگاه",
+        "baskets": "🍽 بر اساس تعداد سبدها"
+    }
+
+    for subk, subv in cat_data.items():
+        if subk != "title" and isinstance(subv, dict) and subv:
+            lbl = filter_labels.get(subk, f"بر اساس {subk}")
+            cb = make_safe_cb("cat_f", f"{cat_key}:{subk}")
+            buttons.append([InlineKeyboardButton(lbl, callback_data=cb)])
+
+    buttons.append([
+        InlineKeyboardButton("📋 مشاهده همه کالاهای این دسته", callback_data=make_safe_cb("cat_all", cat_key)),
+        InlineKeyboardButton("🔙 بازگشت به دسته‌ها", callback_data="cat_back")
+    ])
+
+    all_pids = set()
+    for subk, subv in cat_data.items():
+        if isinstance(subv, dict):
+            for itemv in subv.values():
+                if isinstance(itemv, list):
+                    all_pids.update(itemv)
+
+    msg_text = (
+        f"📂 <b>دسته‌بندی: {title}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 تعداد کل مدل‌های موجود: <b>{len(all_pids)} مدل</b>\n\n"
+        f"🔍 نحوه انتخاب و فیلتر را مشخص فرمایید:"
+    )
+    return msg_text, InlineKeyboardMarkup(buttons)
+
+def get_filter_options_markup(cat_key: str, filter_type: str) -> Tuple[str, Any]:
+    tree = load_categories_tree()
+    cat_data = tree.get(cat_key, {})
+    title = cat_data.get("title", cat_key)
+    options_dict = cat_data.get(filter_type, {})
+
+    buttons = []
+    row = []
+    for opt_name, pids in options_dict.items():
+        count = len(pids) if isinstance(pids, list) else 0
+        btn_text = f"{opt_name} ({count})"
+        cb = make_safe_cb("cat_opt", f"{cat_key}:{filter_type}:{opt_name}")
+        row.append(InlineKeyboardButton(btn_text, callback_data=cb))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    buttons.append([
+        InlineKeyboardButton("🔙 بازگشت به این دسته", callback_data=make_safe_cb("cat_m", cat_key)),
+        InlineKeyboardButton("📂 همه دسته‌ها", callback_data="cat_back")
+    ])
+
+    filter_names = {
+        "brands": "برندها",
+        "sizes": "سایزها",
+        "capacities": "ظرفیت‌ها",
+        "plans": "طرح‌ها و مدل‌های بدنه",
+        "types": "انواع مدل‌ها",
+        "baskets": "تعداد سبدها"
+    }
+    f_title = filter_names.get(filter_type, filter_type)
+    msg_text = f"🔍 <b>{title} - انتخاب بر اساس {f_title}:</b>\nلطفاً گزینه مورد نظر را انتخاب فرمایید:"
+    return msg_text, InlineKeyboardMarkup(buttons)
+
+def get_products_for_category_selection(cat_key: str, filter_type: Optional[str] = None, opt_name: Optional[str] = None) -> List[dict]:
+    tree = load_categories_tree()
+    cat_data = tree.get(cat_key, {})
+    target_pids = set()
+
+    if filter_type and opt_name:
+        sub_dict = cat_data.get(filter_type, {})
+        pids = sub_dict.get(opt_name, [])
+        target_pids.update(str(p) for p in pids)
+    else:
+        for subk, subv in cat_data.items():
+            if isinstance(subv, dict):
+                for itemv in subv.values():
+                    if isinstance(itemv, list):
+                        target_pids.update(str(p) for p in itemv)
+
+    from search_engine import JSON_PRODUCTS
+    matched = []
+    for p in JSON_PRODUCTS:
+        pid = str(p.get("product_id", "")).strip()
+        if pid in target_pids:
+            matched.append(p)
+
+    return matched
+

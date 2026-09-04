@@ -48,6 +48,12 @@ logger = logging.getLogger(__name__)
 # ─── ماژول‌های سیستم ───
 from database import Database
 from search_engine import JSON_PRODUCTS, search_products, _normalize_digits
+from bot_catalog import (
+    get_main_categories_markup,
+    get_category_sub_markup,
+    get_filter_options_markup,
+    get_products_for_category_selection
+)
 from keyboards import (
     is_admin,
     main_menu_keyboard,
@@ -301,9 +307,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💡 لطفاً نام مدل، برند یا دسته‌بندی کالا را تایپ کنید (مثال: <code>V9</code> یا <code>الجی</code>):", parse_mode="HTML")
         return
     elif text == "📂 دسته‌بندی‌ها":
-        categories = ["تلویزیون", "یخچال و فریزر", "ماشین لباسشویی", "ماشین ظرفشویی", "کولر گازی و اسپلیت", "لوازم پخت و پز"]
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(f"📂 {c}", callback_data=f"cat|{c}")] for c in categories])
-        await update.message.reply_text("📂 لطفاً دسته‌بندی مورد نظر را انتخاب نمایید:", reply_markup=kb)
+        kb = get_main_categories_markup()
+        await update.message.reply_text(
+            "📂 <b>دسته‌بندی‌های جامع فروشگاه هوشمند کالا:</b>\n"
+            "لطفاً دسته کالای مورد نظر خود را جهت مشاهده مشخصات و کاتالوگ انتخاب فرمایید:",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
         return
     elif text == "📋 پیگیری سفارش":
         await track_order_command(update, context)
@@ -344,7 +354,95 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     data = query.data
 
-    if data.startswith("sel|"):
+    # ─── ناوبری هوشمند و پویای دسته‌بندی‌ها ───
+    if data == "cat_back":
+        await query.answer()
+        kb = get_main_categories_markup()
+        try:
+            await query.edit_message_text(
+                "📂 <b>دسته‌بندی‌های جامع فروشگاه هوشمند کالا:</b>\n"
+                "لطفاً دسته کالای مورد نظر خود را جهت مشاهده مشخصات و کاتالوگ انتخاب فرمایید:",
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+        except Exception:
+            await query.message.reply_text(
+                "📂 <b>دسته‌بندی‌های جامع فروشگاه هوشمند کالا:</b>\n"
+                "لطفاً دسته کالای مورد نظر خود را جهت مشاهده مشخصات و کاتالوگ انتخاب فرمایید:",
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+        return
+
+    elif data.startswith("cat_m|"):
+        await query.answer()
+        cat_key = resolve_safe_cb(data)
+        msg_text, kb = get_category_sub_markup(cat_key)
+        try:
+            await query.edit_message_text(msg_text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await query.message.reply_text(msg_text, reply_markup=kb, parse_mode="HTML")
+        return
+
+    elif data.startswith("cat_f|"):
+        await query.answer()
+        raw_payload = resolve_safe_cb(data)
+        parts = raw_payload.split(":", 1)
+        if len(parts) == 2:
+            cat_key, filter_type = parts
+            msg_text, kb = get_filter_options_markup(cat_key, filter_type)
+            try:
+                await query.edit_message_text(msg_text, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                await query.message.reply_text(msg_text, reply_markup=kb, parse_mode="HTML")
+        return
+
+    elif data.startswith("cat_opt|"):
+        await query.answer()
+        raw_payload = resolve_safe_cb(data)
+        parts = raw_payload.split(":", 2)
+        if len(parts) == 3:
+            cat_key, filter_type, opt_name = parts
+            products = get_products_for_category_selection(cat_key, filter_type, opt_name)
+            if products:
+                context.user_data["search_results_list"] = products
+                context.user_data["search_query_text"] = f"{opt_name}"
+                context.user_data["last_search_results"] = {p["product_id"]: p for p in products}
+                await show_search_page(update, context, products, 0)
+            else:
+                await query.message.reply_text("❌ کالایی با این فیلتر در انبار یافت نشد.")
+        return
+
+    elif data.startswith("cat_sub|"):
+        await query.answer()
+        raw_payload = resolve_safe_cb(data)
+        parts = raw_payload.split(":", 1)
+        if len(parts) == 2:
+            cat_key, sub_name = parts
+            products = get_products_for_category_selection(cat_key, "subcategories", sub_name)
+            if products:
+                context.user_data["search_results_list"] = products
+                context.user_data["search_query_text"] = sub_name
+                context.user_data["last_search_results"] = {p["product_id"]: p for p in products}
+                await show_search_page(update, context, products, 0)
+            else:
+                await query.message.reply_text("❌ کالایی در این زیرشاخه یافت نشد.")
+        return
+
+    elif data.startswith("cat_all|"):
+        await query.answer()
+        cat_key = resolve_safe_cb(data)
+        products = get_products_for_category_selection(cat_key)
+        if products:
+            context.user_data["search_results_list"] = products
+            context.user_data["search_query_text"] = cat_key
+            context.user_data["last_search_results"] = {p["product_id"]: p for p in products}
+            await show_search_page(update, context, products, 0)
+        else:
+            await query.message.reply_text("❌ کالایی در این دسته یافت نشد.")
+        return
+
+    elif data.startswith("sel|"):
         await query.answer()
         pid = resolve_safe_cb(data)
         logger.info(f"👉 [BUTTON CLICKED] User clicked on product button ID: {pid}")
