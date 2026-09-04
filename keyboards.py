@@ -101,8 +101,23 @@ from guidbuy import help_menu_keyboard, guide_section_keyboard
 def build_boxed_product_message(p: Dict[str, Any]) -> str:
     name = p.get("name", "محصول بدون نام")
     brand = p.get("brand", "نامشخص")
-    category = p.get("category", "لوازم خانگی")
-    price = p.get("price", "تماس بگیرید")
+    category = p.get("category") or p.get("category_name") or "لوازم خانگی"
+    raw_price = p.get("price", 0)
+
+    if isinstance(raw_price, (int, float)) and raw_price > 0:
+        price_str = f"{int(raw_price):,} تومان"
+    elif p.get("price_formatted"):
+        price_str = p["price_formatted"]
+    else:
+        price_str = str(raw_price) if raw_price else "تماس بگیرید"
+
+    status_raw = p.get("status", "b")
+    if status_raw == "b" and (isinstance(raw_price, (int, float)) and raw_price > 0):
+        status_text = "✅ موجود در انبار"
+    elif status_raw == "i":
+        status_text = "📞 استعلام تلفنی"
+    else:
+        status_text = "❌ ناموجود"
 
     specs = p.get("specs", {})
     if isinstance(specs, str):
@@ -113,8 +128,9 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
 
     specs_lines = []
     if isinstance(specs, dict):
-        for k, v in list(specs.items())[:6]:
-            specs_lines.append(f"▫️ <b>{k}:</b> {v}")
+        for k, v in specs.items():
+            if v:
+                specs_lines.append(f"▫️ <b>{k}:</b> {v}")
 
     specs_str = "\n".join(specs_lines) if specs_lines else "▫️ دارای ضمانت اصالت کتبی و گارانتی معتبر شرکتی"
 
@@ -122,9 +138,10 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
         f"🌟 <b>{name}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"🏷 <b>برند:</b> {brand} | 📂 <b>دسته:</b> {category}\n"
-        f"💰 <b>وضعیت قیمت:</b> {price}\n"
+        f"💰 <b>قیمت روز:</b> {price_str}\n"
+        f"📦 <b>وضعیت موجودی:</b> {status_text}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📋 <b>مشخصات کلیدی دستگاه:</b>\n"
+        f"📋 <b>مشخصات فنی کالا:</b>\n"
         f"{specs_str}\n\n"
         f"{PRICE_NOTE}"
     )
