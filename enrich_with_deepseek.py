@@ -14,6 +14,7 @@ import os
 import re
 import json
 import time
+import asyncio
 import urllib.request
 import urllib.error
 import sqlite3
@@ -22,22 +23,29 @@ import logging
 from typing import Dict, Any, Optional
 
 # لود خودکار متغیرهای .env در صورت وجود
-def load_env_file(filepath: str = ".env"):
-    if os.path.exists(filepath):
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    if "=" in line:
-                        k, v = line.split("=", 1)
-                        k = k.strip()
-                        v = v.strip().strip('"').strip("'")
-                        if k and k not in os.environ:
-                            os.environ[k] = v
-        except Exception:
-            pass
+def load_env_file():
+    # بررسی مسیرهای احتمالی فایل .env
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+        os.path.join(os.getcwd(), ".env"),
+        ".env"
+    ]
+    for filepath in candidates:
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            k = k.strip()
+                            v = v.strip().strip('"').strip("'")
+                            if k and k not in os.environ:
+                                os.environ[k] = v
+            except Exception:
+                pass
 
 load_env_file()
 
@@ -190,6 +198,13 @@ async def async_enrich_product_on_demand(product: dict) -> bool:
 
     api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not api_key:
+        try:
+            import config
+            api_key = getattr(config, "DEEPSEEK_API_KEY", "").strip()
+        except Exception:
+            pass
+
+    if not api_key:
         return False
 
     base_url = os.getenv("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL).strip()
@@ -198,11 +213,13 @@ async def async_enrich_product_on_demand(product: dict) -> bool:
     if not pname:
         return False
 
+    logger.info(f"🤖 [AI-ENRICH] درخواست استخراج مشخصات فنی '{pname}' با مدل '{model}' از دیپ‌سیک...")
+
     # فراخوانی غیرمسدودکننده با تایم‌اوت مشخص جهت جلوگیری از توقف ربات
     try:
         specs = await asyncio.wait_for(
             asyncio.to_thread(call_deepseek_api, api_key, pname, base_url, model),
-            timeout=7.0
+            timeout=10.0
         )
     except Exception as e:
         logger.warning(f"On-demand DeepSeek enrichment note for {pname}: {e}")
@@ -219,7 +236,10 @@ async def async_enrich_product_on_demand(product: dict) -> bool:
         pid = str(product.get("product_id") or "")
         if pid:
             asyncio.create_task(asyncio.to_thread(_sync_save_product_update, pid, specs))
+        logger.info(f"✅ [AI-ENRICH] مشخصات فنی '{pname}' ({len(specs)} مورد) با موفقیت دریافت و برای همیشه ذخیره شد.")
         return True
+    else:
+        logger.warning(f"⚠️ [AI-ENRICH] پاسخی برای مشخصات '{pname}' از DeepSeek دریافت نشد.")
 
     return False
 
