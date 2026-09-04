@@ -9,7 +9,7 @@ import os
 import re
 import json
 import logging
-from typing import List, Dict, Any, Tuple, Set
+from typing import List, Dict, Any, Tuple, Set, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -271,16 +271,72 @@ def parse_post_metadata(caption: str, photo_file_ids: List[str]) -> Dict[str, An
 
 JSON_PRODUCTS: List[Dict[str, Any]] = []
 
-def load_json_products(file_path: str = "momtazkalla_all_products.json"):
+def load_json_products(file_path: Optional[str] = None):
     global JSON_PRODUCTS
     JSON_PRODUCTS.clear()
+
+    # اولویت ۱: فایل جدید و تمیزشده کاتالوگ با ۹۵۵ محصول و ۱۰ ستون کامل
+    # اولویت ۲: فایل خام پشتیبان
+    if file_path is None:
+        if os.path.exists("catalog_products.json"):
+            file_path = "catalog_products.json"
+        elif os.path.exists("momtazkalla_all_products.json"):
+            file_path = "momtazkalla_all_products.json"
+        else:
+            file_path = "catalog_products.json"
+
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                raw_products = json.load(f)
+                raw_data = json.load(f)
+
+            if isinstance(raw_data, dict):
+                raw_products = list(raw_data.values())
+            else:
+                raw_products = raw_data
 
             seen_keys = set()
             for p in raw_products:
+                if not isinstance(p, dict):
+                    continue
+
+                # یکسان‌سازی عنوان دسته‌بندی
+                if "category" not in p and "category_name" in p:
+                    p["category"] = p["category_name"]
+
+                # تولید خودکار مشخصات فنی ۱۰ ستونه برای کارت محصول در تلگرام
+                if "specs" not in p or not p["specs"]:
+                    specs_dict = {}
+                    if p.get("assembly"): specs_dict["کشور مونتاژ"] = p["assembly"]
+                    if p.get("year"): specs_dict["سال ساخت"] = p["year"]
+                    if p.get("resolution"): specs_dict["کیفیت تصویر"] = p["resolution"]
+                    if p.get("panel"): specs_dict["نوع پنل"] = p["panel"]
+                    if p.get("refresh_rate"): specs_dict["رفرش ریت"] = p["refresh_rate"]
+                    if p.get("backlight"): specs_dict["بکلایت"] = p["backlight"]
+                    if p.get("os"): specs_dict["سیستم‌عامل"] = p["os"]
+                    if p.get("temp_range"): specs_dict["شرایط آب و هوایی"] = p["temp_range"]
+                    if p.get("room_size"): specs_dict["پوشش فضا"] = p["room_size"]
+                    if p.get("energy_consumption"): specs_dict["مصرف و موتور"] = p["energy_consumption"]
+                    if p.get("performance"): specs_dict["عملکرد"] = p["performance"]
+                    if p.get("key_features"): specs_dict["ویژگی‌ها"] = p["key_features"]
+                    if p.get("plan"): specs_dict["طرح بدنه"] = p["plan"]
+                    if p.get("capacity_foot"): specs_dict["ظرفیت به فوت"] = p["capacity_foot"]
+                    if p.get("num_doors"): specs_dict["تعداد درب"] = p["num_doors"]
+                    if p.get("capacity_kg"): specs_dict["ظرفیت شستشو"] = f"{p['capacity_kg']} کیلوگرم"
+                    if p.get("baskets"): specs_dict["تعداد سبد"] = p["baskets"]
+                    if p.get("subcategory"): specs_dict["زیرشاخه"] = p["subcategory"]
+                    if p.get("score"): specs_dict["امتیاز کیفی"] = f"⭐️ {p['score']} از ۱۰"
+
+                    if specs_dict:
+                        p["specs"] = specs_dict
+                    elif p.get("more_details"):
+                        p["specs"] = {"مشخصات کلیدی": p["more_details"]}
+
+                # فرمت خوانای قیمت تومان
+                price_val = p.get("price", 0)
+                if isinstance(price_val, (int, float)) and price_val > 0:
+                    p["price_formatted"] = f"{int(price_val):,} تومان"
+
                 pid = str(p.get("product_id", "")).strip()
                 pname = str(p.get("name", "")).strip()
                 unique_key = pid if pid else f"{pname}_{p.get('brand', '')}"
@@ -289,7 +345,7 @@ def load_json_products(file_path: str = "momtazkalla_all_products.json"):
                     seen_keys.add(unique_key)
                     JSON_PRODUCTS.append(p)
 
-            logger.info(f"[CACHE] Loaded {len(JSON_PRODUCTS)} UNIQUE products from JSON (Deduplicated)")
+            logger.info(f"[CACHE] Loaded {len(JSON_PRODUCTS)} UNIQUE products from {file_path} (Deduplicated)")
         except Exception as e:
             logger.warning(f"Error loading JSON products: {e}")
 
