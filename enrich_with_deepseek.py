@@ -100,8 +100,8 @@ def call_deepseek_api(api_key: str, product_name: str, base_url: str = DEFAULT_B
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"کالا: {cleaned_name}"}
         ],
-        "max_tokens": 150,
-        "temperature": 0.1,
+        "max_tokens": 600,
+        "temperature": 0.2,
         "stream": False
     }
 
@@ -116,11 +116,28 @@ def call_deepseek_api(api_key: str, product_name: str, base_url: str = DEFAULT_B
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=18) as resp:
             raw_bytes = resp.read()
             data = json.loads(raw_bytes.decode("utf-8"))
-            content = data["choices"][0]["message"]["content"].strip()
+            choice = data.get("choices", [{}])[0]
+            msg = choice.get("message", {})
+            content = (msg.get("content") or "").strip()
+            reasoning = (msg.get("reasoning_content") or "").strip()
+
+            # در صورت خالی بودن content در مدل‌های استدلالی، از reasoning_content استفاده کن
+            if not content and reasoning:
+                content = reasoning
+                logger.info("ℹ️ [DEEPSEEK] استخراج از reasoning_content انجام شد.")
+
+            # حذف تگ‌های تفکر <think>...</think> در صورت وجود
+            if "</think>" in content:
+                after_think = content.split("</think>", 1)[1].strip()
+                if after_think:
+                    content = after_think
+
             logger.info(f"📩 [DEEPSEEK RAW]:\n{content}")
+            if not content:
+                logger.warning(f"⚠️ [DEEPSEEK CHOICE DUMP]: {choice}")
             
             # ۱. بررسی اگر مدل خروجی JSON داده باشد
             if content.startswith("{") and content.endswith("}"):
@@ -237,7 +254,7 @@ async def async_enrich_product_on_demand(product: dict) -> bool:
     try:
         specs = await asyncio.wait_for(
             asyncio.to_thread(call_deepseek_api, api_key, pname, base_url, model),
-            timeout=10.0
+            timeout=18.0
         )
     except Exception as e:
         logger.warning(f"On-demand DeepSeek enrichment note for {pname}: {e}")
