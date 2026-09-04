@@ -48,6 +48,13 @@ CORE_SERVICES: List[Dict[str, Any]] = [
         "env_check": "TELEGRAM_BOT_TOKEN"
     },
     {
+        "id": "scheduler",
+        "name": "⏰ سرویس زمان‌بندی خودکار قیمت‌ها و کاتالوگ",
+        "script": "scheduler_service.py",
+        "critical": False,
+        "env_check": None
+    },
+    {
         "id": "monitor",
         "name": "📡 مانیتور و پابلیشر خودکار کانال",
         "script": "channel_monitor.py",
@@ -64,7 +71,7 @@ SHUTDOWN_REQUESTED = False
 def check_preflight_syntax(scripts: List[str]) -> bool:
     """بررسی سلامت نحوی کدهای پایتون قبل از شروع سرویس‌ها"""
     logger.info("🔍 Performing pre-flight syntax checks on core modules...")
-    modules_to_check = list(set(scripts + ["guidbuy.py", "support_service.py", "keyboards.py", "database.py", "order_flow.py", "photo_service.py", "order_tracking.py"]))
+    modules_to_check = list(set(scripts + ["guidbuy.py", "support_service.py", "keyboards.py", "database.py", "order_flow.py", "photo_service.py", "order_tracking.py", "scheduler_service.py", "sync_prices.py", "sync_catalog.py"]))
     all_ok = True
 
     for mod in modules_to_check:
