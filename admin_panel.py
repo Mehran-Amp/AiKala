@@ -33,6 +33,8 @@ from photo_service import (
     CHANNEL_MEDIA_GROUPS,
     load_channel_photos_map,
     save_verified_photos,
+    save_verified_product_entry,
+    find_matching_verified_photos,
     parse_telegram_post_link,
     probe_telegram_channel_album,
     send_verified_photos_to_user
@@ -451,19 +453,34 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
         ch_clean = channel.replace("@", "")
         post_link = f"https://t.me/{ch_clean}/{final_msg_ids[0]}"
 
-    # ذخیره پایدار در کش تایید شده
-    VERIFIED_PRODUCT_PHOTOS[pid] = {
-        "channel": channel,
-        "message_ids": final_msg_ids,
-        "file_ids": final_file_ids,
-        "link": post_link,
-        "product_name": pname,
-        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M")
-    }
-    save_verified_photos()
+    # ذخیره پایدار در کش تایید شده با اطلاعات کامل مدل
+    prod_model = ""
+    prod_brand = ""
+    prod_cat = ""
+    try:
+        from search_engine import JSON_PRODUCTS
+        prod_obj = next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
+        if prod_obj:
+            prod_model = str(prod_obj.get("model_number", ""))
+            prod_brand = prod_obj.get("brand", "")
+            prod_cat = prod_obj.get("category_name", "") or prod_obj.get("category_key", "")
+    except Exception:
+        pass
+
+    save_verified_product_entry(
+        pid=pid,
+        product_name=pname,
+        channel=channel,
+        message_ids=final_msg_ids,
+        file_ids=final_file_ids,
+        link=post_link,
+        model_number=prod_model,
+        brand=prod_brand,
+        category=prod_cat
+    )
     context.user_data.pop("awaiting_product_image_link", None)
 
-    # ارسال آنی برای کاربری که دکمه را زده بود و سایر کاربران در انتظار
+    # ارسال آنی برای کاربری که دکمه را زده بود و سایر کاربران در انتظار این کالا
     recipients = set()
     if target_uid and target_uid != 0:
         recipients.add(target_uid)
@@ -480,6 +497,30 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
 
     PENDING_IMAGE_REQUESTS.pop(pid, None)
 
+    # بررسی و ارسال خودکار برای کاربرانی که منتظر مدل‌های مشابه این کالا بوده‌اند
+    similar_cleared_pids = []
+    try:
+        from search_engine import JSON_PRODUCTS
+        for pending_pid, waiting_users in list(PENDING_IMAGE_REQUESTS.items()):
+            if pending_pid != pid and waiting_users:
+                m_pid, m_data, m_type = find_matching_verified_photos(pending_pid)
+                if m_pid == pid and m_data:
+                    w_prod = next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pending_pid)), None)
+                    w_name = w_prod.get("name", f"کالای {pending_pid}") if w_prod else f"کالای {pending_pid}"
+                    w_note = f"تصاویر مربوط به سری و مدل مشابه ({pname}) می‌باشد." if pname != w_name else None
+                    for w_uid in waiting_users:
+                        try:
+                            await send_verified_photos_to_user(context.bot, w_uid, pending_pid, w_name, photo_data=m_data, matched_note=w_note)
+                            sent_count += 1
+                        except Exception as e_w:
+                            logger.error(f"Error sending photos to waiting user {w_uid} for similar model {pending_pid}: {e_w}")
+                    similar_cleared_pids.append(pending_pid)
+    except Exception as e_sim:
+        logger.error(f"Error processing similar pending requests: {e_sim}")
+
+    for sc_pid in similar_cleared_pids:
+        PENDING_IMAGE_REQUESTS.pop(sc_pid, None)
+
     total_photos_detected = len(final_file_ids) if final_file_ids else len(final_msg_ids)
     await update.message.reply_text(
         f"✅ <b>تصاویر محصول با موفقیت تایید و ثبت شد!</b>\n\n"
@@ -487,6 +528,6 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
         f"🖼 <b>تعداد تصاویر کشف شده آلبوم:</b> {total_photos_detected} عکس\n"
         f"🔗 <b>مرجع تصاویر:</b> <code>{post_link or final_msg_ids}</code>\n"
         f"👥 <b>ارسال آنی برای کاربران در انتظار:</b> {sent_count} کاربر\n\n"
-        f"✨ <i>از این لحظه، هر کاربری دکمه «📸 تصاویر محصول» این کالا را لمس کند، کل آلبوم {total_photos_detected} تایی به صورت خودکار برای او ارسال خواهد شد.</i>",
+        f"✨ <i>از این لحظه، هر کاربری دکمه «📸 تصاویر محصول» این کالا یا مدل‌های مشابه آن را لمس کند، کل آلبوم {total_photos_detected} تایی به صورت خودکار برای او ارسال خواهد شد.</i>",
         parse_mode="HTML"
     )

@@ -75,6 +75,7 @@ from photo_service import (
     register_photo_message,
     save_channel_photos_map,
     save_verified_photos,
+    find_matching_verified_photos,
     send_verified_photos_to_user,
     get_product_photos,
     send_product_card_and_photos,
@@ -912,10 +913,25 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             prod = await db.get_product_by_id(pid)
         pname = prod.get("name", "این محصول") if prod else "این محصول"
 
-        # ۱. اگر قبلاً تایید شده است -> ارسال مستقیم آلبوم تضمینی
-        if pid in VERIFIED_PRODUCT_PHOTOS:
-            await query.answer("📸 در حال ارسال تصاویر اختصاصی محصول...")
-            success = await send_verified_photos_to_user(context.bot, query.message.chat_id, pid, pname)
+        # ۱. بررسی هوشمند تصاویر تایید شده محصول یا مدل و سری مشابه
+        matched_pid, photo_data, match_type = find_matching_verified_photos(prod or pid)
+        if photo_data:
+            if match_type == "exact":
+                await query.answer("📸 در حال ارسال تصاویر اختصاصی محصول...")
+                matched_note = None
+            else:
+                await query.answer("📸 در حال ارسال تصاویر مدل و سری کالا...")
+                sim_name = photo_data.get("product_name", "")
+                matched_note = f"تصاویر مربوط به سری و مدل مشابه ({sim_name}) می‌باشد." if sim_name and sim_name != pname else None
+
+            success = await send_verified_photos_to_user(
+                context.bot,
+                query.message.chat_id,
+                pid,
+                pname,
+                photo_data=photo_data,
+                matched_note=matched_note
+            )
             if success:
                 return
 

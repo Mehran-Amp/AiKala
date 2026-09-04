@@ -15,6 +15,7 @@ import logging
 import asyncio
 import io
 import urllib.request
+from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 
 try:
@@ -45,7 +46,8 @@ from search_engine import (
     extract_category_from_text,
     parse_post_metadata,
     STOP_WORDS_NOT_MODELS,
-    is_model_code
+    is_model_code,
+    detect_product_brand
 )
 from keyboards import build_boxed_product_message, product_inline_keyboard
 
@@ -90,6 +92,181 @@ def clear_verified_photos() -> int:
     save_verified_photos()
     logger.info(f"🗑 [PHOTOS] Cleared {count} verified product photos.")
     return count
+
+# ─── سیستم هوشمند شناسایی و ارجاع تصاویر مدل‌های مشابه ───
+
+KNOWN_DISPLAY_SIZES = {'32', '40', '42', '43', '48', '49', '50', '55', '65', '70', '75', '77', '83', '85', '86', '98'}
+KNOWN_CAPACITY_NUMS = {'7', '8', '9', '10', '10.5', '12', '14', '28', '30'}
+
+def clean_model_str(s: str) -> str:
+    """حذف سایز تلویزیون از ابتدای کد مدل و پاکسازی کاراکترهای اضافه جهت مقایسه تمیز مدل‌ها"""
+    if not s:
+        return ""
+    s_norm = _normalize_digits(str(s)).lower()
+    s_norm = re.sub(r'^(?:32|40|42|43|48|49|50|55|65|70|75|77|83|85|86|98)', '', s_norm)
+    s_norm = re.sub(r'(مشکی|سفید|نقره\s*ای|سیلور|استیل|دودی|طلایی|black|white|silver|inox)', '', s_norm)
+    return re.sub(r'[^a-z0-9]', '', s_norm)
+
+def filter_model_tokens(tokens: set) -> set:
+    """فیلتر کردن اعدادی که صرفاً سایز تلویزیون یا ظرفیت ساده هستند"""
+    return {
+        t for t in tokens
+        if t not in KNOWN_DISPLAY_SIZES and t not in KNOWN_CAPACITY_NUMS and len(t) >= 2
+    }
+
+def save_verified_product_entry(
+    pid: str,
+    product_name: str,
+    channel: str,
+    message_ids: List[int],
+    file_ids: List[str],
+    link: Optional[str] = None,
+    model_number: str = "",
+    brand: str = "",
+    category: str = "",
+    extra_data: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """ذخیره دائمی و همیشگی تصاویر تایید شده محصول به همراه شناسه‌های دقیق مدل برای ارجاع خودکار به مدل‌های مشابه"""
+    global VERIFIED_PRODUCT_PHOTOS
+    clean_pid = str(pid).strip()
+
+    scope_text = f"{product_name} {model_number}"
+    raw_tokens = tokenize_model_codes(scope_text)
+    filtered_tokens = list(filter_model_tokens(raw_tokens))
+    cores = list(extract_model_market_cores(scope_text))
+    det_brand = normalize_brand(brand or detect_product_brand(product_name))
+    det_cat = normalize_category(category or extract_category_from_text(product_name))
+    color = extract_color_from_text(product_name)
+    capacity = extract_capacity_from_text(product_name)
+
+    entry = {
+        "product_id": clean_pid,
+        "product_name": product_name,
+        "channel": channel,
+        "message_ids": sorted(list(set(message_ids))),
+        "file_ids": file_ids,
+        "link": link or "",
+        "model_number": model_number,
+        "brand": det_brand,
+        "category": det_cat,
+        "model_codes": filtered_tokens,
+        "cores": cores,
+        "color": color,
+        "capacity": capacity,
+        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M")
+    }
+    if extra_data:
+        entry.update(extra_data)
+
+    VERIFIED_PRODUCT_PHOTOS[clean_pid] = entry
+    save_verified_photos()
+    logger.info(f"💾 [VERIFIED_PHOTOS] Saved persistent entry for pid={clean_pid} ({product_name}). Model codes: {filtered_tokens}, Cores: {cores}")
+    return entry
+
+def find_matching_verified_photos(target_prod_or_pid: Any) -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
+    """
+    جستجوی تصاویر تایید شده برای محصول:
+    ۱. تطابق مستقیم کد محصول (Exact Product ID)
+    ۲. در صورت عدم تطابق مستقیم، جستجوی هوشمند برای مدل و سری مشابه (Similar Model)
+    """
+    if not VERIFIED_PRODUCT_PHOTOS:
+        return None, None, None
+
+    target_prod = None
+    target_pid = ""
+
+    if isinstance(target_prod_or_pid, dict):
+        target_prod = target_prod_or_pid
+        target_pid = str(target_prod.get("product_id", "")).strip()
+    else:
+        target_pid = str(target_prod_or_pid).strip()
+        # سعی در بارگذاری مشخصات محصول از کش کاتالوگ
+        try:
+            from search_engine import JSON_PRODUCTS
+            target_prod = next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == target_pid), None)
+        except Exception:
+            pass
+
+    # ۱. بررسی تطابق مستقیم کد کالا
+    if target_pid and target_pid in VERIFIED_PRODUCT_PHOTOS:
+        return target_pid, VERIFIED_PRODUCT_PHOTOS[target_pid], "exact"
+
+    # ۲. اگر اطلاعات نام کالا موجود نیست، تطابق مدل مشابه مقدور نیست
+    if not target_prod:
+        return None, None, None
+
+    pname = target_prod.get("name", "")
+    pmodel = str(target_prod.get("model_number", "")).strip()
+    scope_text = f"{pname} {pmodel}"
+
+    target_brand = normalize_brand(target_prod.get("brand") or detect_product_brand(pname))
+    target_cat = normalize_category(target_prod.get("category_name") or target_prod.get("category_key") or extract_category_from_text(pname))
+    target_tokens = filter_model_tokens(tokenize_model_codes(scope_text))
+    target_cores = extract_model_market_cores(scope_text)
+    target_clean_model = clean_model_str(pmodel)
+    target_color = extract_color_from_text(pname)
+    target_cap = extract_capacity_from_text(pname)
+
+    best_candidate_pid = None
+    best_candidate_data = None
+    best_score = 0
+
+    for v_pid, v_data in VERIFIED_PRODUCT_PHOTOS.items():
+        v_name = v_data.get("product_name", "")
+        v_model = str(v_data.get("model_number", "")).strip()
+        v_scope = f"{v_name} {v_model}"
+
+        # الف) اعتبارسنجی برند (عدم تطابق برندهای متفاوت مانند سونی با سامسونگ)
+        v_brand = v_data.get("brand") or normalize_brand(detect_product_brand(v_name))
+        if target_brand and v_brand and target_brand != v_brand:
+            continue
+
+        # ب) اعتبارسنجی دسته‌بندی (عدم تطابق تلویزیون با لباسشویی)
+        v_cat = v_data.get("category") or normalize_category(extract_category_from_text(v_name))
+        if target_cat and v_cat and target_cat != v_cat:
+            continue
+
+        v_tokens = set(v_data.get("model_codes") or filter_model_tokens(tokenize_model_codes(v_scope)))
+        v_cores = set(v_data.get("cores") or extract_model_market_cores(v_scope))
+        v_clean_model = clean_model_str(v_model)
+
+        score = 0
+
+        # ۱. تطابق هسته مهندسی و مارکتینگ مدل (مانند X75K، C3، V9، 5050، 5070 و ...)
+        if target_cores and v_cores and (target_cores & v_cores):
+            score += 85
+
+        # ۲. تطابق توکن‌های مدل (شامل حروف و ارقام یا ارقام ۴ رقمی و بیشتر)
+        common_tokens = target_tokens & v_tokens
+        strong_tokens = [tok for tok in common_tokens if any(c.isalpha() for c in tok) or len(tok) >= 4]
+        if strong_tokens:
+            score += 80
+        elif common_tokens:
+            score += 45
+
+        # ۳. تطابق کد مدل تمیزشده پس از تفکیک سایز/رنگ
+        if target_clean_model and v_clean_model and target_clean_model == v_clean_model and len(target_clean_model) >= 3:
+            score += 85
+
+        # امتیازهای تکمیلی (هم‌رنگ بودن یا هم‌اندازه بودن در همان مدل)
+        if score >= 70:
+            v_color = v_data.get("color") or extract_color_from_text(v_name)
+            if target_color and v_color and target_color == v_color:
+                score += 10
+            v_cap = v_data.get("capacity") or extract_capacity_from_text(v_name)
+            if target_cap and v_cap and target_cap == v_cap:
+                score += 5
+
+            if score > best_score:
+                best_score = score
+                best_candidate_pid = v_pid
+                best_candidate_data = v_data
+
+    if best_score >= 70 and best_candidate_data:
+        logger.info(f"🎯 [SIMILAR PHOTO FOUND] Product '{pname}' (ID: {target_pid}) matched similar model '{best_candidate_data.get('product_name')}' (ID: {best_candidate_pid}) with score={best_score}")
+        return best_candidate_pid, best_candidate_data, "similar"
+
+    return None, None, None
 
 load_verified_photos()
 
@@ -390,9 +567,26 @@ async def prepare_media_items(items: List[Any], timeout: int = 10) -> List[Tuple
 
 # ─── تحویل تصاویر به کاربر ───
 
-async def send_verified_photos_to_user(bot, chat_id: int, pid: str, product_name: str) -> bool:
+async def send_verified_photos_to_user(
+    bot,
+    chat_id: int,
+    pid: str,
+    product_name: str,
+    photo_data: Optional[Dict[str, Any]] = None,
+    matched_note: Optional[str] = None
+) -> bool:
     """ارسال تصاویر تایید شده محصول به صورت آلبوم و همراه با کپشن دقیق بدون ذکر نام کانال یا دکمه لینک"""
-    photo_data = VERIFIED_PRODUCT_PHOTOS.get(pid)
+    if photo_data is None:
+        matched_pid, found_data, match_type = find_matching_verified_photos(pid)
+        if found_data:
+            photo_data = found_data
+            if match_type == "similar" and not matched_note:
+                sim_name = photo_data.get("product_name", "")
+                if sim_name and sim_name != product_name:
+                    matched_note = f"تصاویر مربوط به سری و مدل مشابه ({sim_name}) می‌باشد."
+        else:
+            photo_data = VERIFIED_PRODUCT_PHOTOS.get(pid)
+
     if not photo_data:
         logger.warning(f"⚠️ [DELIVERY DEBUG] No photo_data in VERIFIED_PRODUCT_PHOTOS for pid={pid}")
         return False
@@ -420,6 +614,8 @@ async def send_verified_photos_to_user(bot, chat_id: int, pid: str, product_name
         f"📸 <b>تصاویر اختصاصی کالا:</b>\n"
         f"🌟 <b>{product_name}</b>"
     )
+    if matched_note:
+        header_msg += f"\n\nℹ️ <i>{matched_note}</i>"
 
     sent_any = False
 
@@ -579,6 +775,18 @@ async def send_verified_photos_to_user(bot, chat_id: int, pid: str, product_name
                 sent_any = True
             except Exception as e:
                 logger.warning(f"❌ [DELIVERY DEBUG] Failed copy_message for {pid}: {e}")
+
+    if sent_any and pid not in VERIFIED_PRODUCT_PHOTOS and photo_data:
+        try:
+            linked_entry = dict(photo_data)
+            linked_entry["product_id"] = pid
+            linked_entry["product_name"] = product_name
+            linked_entry["linked_from_pid"] = photo_data.get("product_id")
+            VERIFIED_PRODUCT_PHOTOS[pid] = linked_entry
+            save_verified_photos()
+            logger.info(f"🔗 [PHOTO CACHE] Persistently linked similar model photos to pid={pid} ({product_name})")
+        except Exception as e_link:
+            logger.warning(f"Failed to auto-link verified photo for {pid}: {e_link}")
 
     return sent_any
 
