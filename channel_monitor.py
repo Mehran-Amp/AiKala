@@ -140,7 +140,9 @@ class ChannelMonitor:
 
     async def _send_repost(self, media_files: List[Any], caption: str, channel_key: str, max_msg_id: int):
         """ارسال یک تک‌عکس یا یک آلبوم چندتایی کامل به کانال مقصد"""
-        if not media_files:
+        # فیلتر کردن فایل‌های خالی یا نامعتبر
+        valid_media = [m for m in media_files if m is not None]
+        if not valid_media:
             return
 
         final_text = clean_caption_preserve_specs(caption)
@@ -151,21 +153,20 @@ class ChannelMonitor:
                 final_text = f"🤖 جهت استعلام قیمت و سفارش با ضمانت کتبی:\n{BOT_LINK}"
 
         try:
-            if len(media_files) == 1:
+            if len(valid_media) == 1:
                 await self.client.send_file(
                     TARGET_IMAGE_CHANNEL,
-                    file=media_files[0],
+                    file=valid_media[0],
                     caption=final_text
                 )
                 logger.info(f"🚀 [SINGLE-PHOTO] Reposted to {TARGET_IMAGE_CHANNEL}")
             else:
-                # ارسال به عنوان آلبوم یکپارچه
                 await self.client.send_file(
                     TARGET_IMAGE_CHANNEL,
-                    file=media_files,
+                    file=valid_media,
                     caption=final_text
                 )
-                logger.info(f"🚀 [ALBUM] Reposted {len(media_files)} photos as ONE album to {TARGET_IMAGE_CHANNEL}")
+                logger.info(f"🚀 [ALBUM] Reposted {len(valid_media)} photos as ONE album to {TARGET_IMAGE_CHANNEL}")
 
             self._save_state(channel_key, max_msg_id)
         except Exception as e:
