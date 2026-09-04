@@ -67,8 +67,8 @@ COLOR_AND_STOPWORDS_REGEX = re.compile(
 )
 
 SYSTEM_PROMPT = (
-    "تو کارشناس فنی لوازم خانگی هستی. برای مدل کالا، دقیقاً ۳ یا ۴ ویژگی فنی و حیاتی (مانند توان مصرفی، گنجایش، کشور سازنده یا نوع موتور) بنویس. "
-    "قالب: هر خط یک ویژگی به صورت 'عنوان: مقدار'. رنگ، قیمت، مقدمه و نتیجه‌گیری ننویس."
+    "تو کارشناس فنی لوازم خانگی هستی. برای مدل کالا، ۳ یا ۴ ویژگی فنی و حیاتی (مانند توان، ظرفیت، کشور سازنده یا نوع موتور) استخراج کن. "
+    "خروجی را فقط به صورت خطوط 'عنوان: مقدار' بده. از نوشتن مقدمه، نتیجه‌گیری، بولت یا رنگ خودداری کن."
 )
 
 def clean_product_name_for_ai(name: str) -> str:
@@ -81,10 +81,13 @@ def clean_product_name_for_ai(name: str) -> str:
     return cleaned
 
 def call_deepseek_api(api_key: str, product_name: str, base_url: str = DEFAULT_BASE_URL, model: str = DEFAULT_MODEL) -> Optional[Dict[str, str]]:
-    """فراخوانی کم‌مصرف API دیپ‌سیک با محدودیت سختگیرانه توکن (Max Tokens = 60)"""
+    """فراخوانی کم‌مصرف API دیپ‌سیک با مدل تعیین‌شده (پیش‌فرض: deepseek-v4-flash)"""
     cleaned_name = clean_product_name_for_ai(product_name)
     if not cleaned_name:
         return None
+
+    if not model:
+        model = DEFAULT_MODEL
 
     # آماده‌سازی آدرس اندپوینت
     endpoint = base_url.rstrip("/")
@@ -97,7 +100,7 @@ def call_deepseek_api(api_key: str, product_name: str, base_url: str = DEFAULT_B
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"کالا: {cleaned_name}"}
         ],
-        "max_tokens": 65,
+        "max_tokens": 150,
         "temperature": 0.1,
         "stream": False
     }
@@ -114,32 +117,47 @@ def call_deepseek_api(api_key: str, product_name: str, base_url: str = DEFAULT_B
 
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            raw_bytes = resp.read()
+            data = json.loads(raw_bytes.decode("utf-8"))
             content = data["choices"][0]["message"]["content"].strip()
+            logger.info(f"📩 [DEEPSEEK RAW]:\n{content}")
             
-            # پارس کردن خروجی خطی به دیکشنری مشخصات
+            # ۱. بررسی اگر مدل خروجی JSON داده باشد
+            if content.startswith("{") and content.endswith("}"):
+                try:
+                    parsed_json = json.loads(content)
+                    if isinstance(parsed_json, dict):
+                        return {str(k).strip(): str(v).strip() for k, v in parsed_json.items() if k and v}
+                except Exception:
+                    pass
+
+            # ۲. پارس کردن خروجی متنی با جداکننده‌های مختلف و پاکسازی مارک‌داون
             specs = {}
             for line in content.split("\n"):
-                line = line.strip().lstrip("-*▫️ ")
-                if ":" in line:
-                    k, v = line.split(":", 1)
-                    k = k.strip()
-                    v = v.strip()
-                    if k and v and len(k) < 30 and len(v) < 60:
-                        specs[k] = v
-                elif "：" in line: # کاراکتر دو نقطه فارسی/عربی
-                    k, v = line.split("：", 1)
-                    k = k.strip()
-                    v = v.strip()
-                    if k and v:
-                        specs[k] = v
-            return specs
+                line = line.strip().lstrip("-*▫️•# ")
+                if not line:
+                    continue
+                # تمیزکاری علامت‌های Bold و Markdown
+                clean_line = line.replace("**", "").replace("__", "").strip()
+                
+                k, v = None, None
+                for sep in [":", "：", " - ", " – ", " = "]:
+                    if sep in clean_line:
+                        parts = clean_line.split(sep, 1)
+                        k = parts[0].strip().lstrip("-*▫️• ")
+                        v = parts[1].strip()
+                        break
+                
+                if k and v and len(k) < 35 and len(v) < 100:
+                    specs[k] = v
+
+            return specs if specs else None
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode("utf-8", errors="ignore")
-        logger.error(f"HTTP Error {e.code}: {err_msg}")
+        logger.error(f"❌ [DeepSeek HTTP Error {e.code}]: {err_msg}")
         return None
     except Exception as e:
-        logger.error(f"Request failed for {cleaned_name}: {e}")
+        logger.error(f"❌ [DeepSeek Request Exception for {cleaned_name}]: {e}")
         return None
 
 def product_has_specs(product: dict) -> bool:
