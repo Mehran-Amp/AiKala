@@ -6,9 +6,11 @@ All settings and environment variables for @AiKala_bot.
 
 import os
 from typing import List, Dict, Any
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # ------------------- Telegram Settings -------------------
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "8837314491:AAGjg67CywBAubXmM2lPm1j3hhhe9W9TdCI")
@@ -63,7 +65,7 @@ DEPOSIT_CARD_NAME: str = os.getenv("DEPOSIT_CARD_NAME", "فروشگاه آاگ �
 CARD_NUMBER: str = DEPOSIT_CARD_NUMBER
 CARD_HOLDER: str = DEPOSIT_CARD_NAME
 DEPOSIT_AMOUNT: str = "۲,۰۰۰,۰۰۰"
-PRICE_NOTE: str = "⚠️ به علت نوسانات لحظه‌ای ارز، صدور پیش‌فاکتور رسمی و استعلام قیمت قطعی قبل از بارگیری الزامی است."
+PRICE_NOTE: str = "⚠️ به علت نوسانات لحظه‌ای ارز، استعلام قیمت قطعی قبل از بارگیری الزامی است."
 
 def round_deposit(amount: int) -> int:
     """گرد کردن مبلغ بیعانه به ارقام رند"""

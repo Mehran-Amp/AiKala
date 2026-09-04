@@ -4,8 +4,15 @@
 """
 
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
+try:
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
+except ImportError:
+    Update = InlineKeyboardButton = InlineKeyboardMarkup = object
+    class MockObj:
+        DEFAULT_TYPE = object
+    ContextTypes = MockObj
+    CallbackQueryHandler = CommandHandler = object
 from config import SUPPORT_USERNAME
 
 logger = logging.getLogger(__name__)

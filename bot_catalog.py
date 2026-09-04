@@ -36,7 +36,7 @@ def get_product_card(prod: dict) -> str:
     if status_raw == "b" and price > 0:
         status_text = "✅ موجود در انبار"
     elif status_raw == "i":
-        status_text = "📞 استعلام تلفنی"
+        status_text = "از دکمه استعلام قیمت کمک بگیر"
     else:
         status_text = "❌ ناموجود"
 
@@ -118,6 +118,10 @@ def get_product_card(prod: dict) -> str:
             lines.append(f"▫️ **امتیاز کیفی:** ⭐️ {prod['score']} از ۱۰")
         if prod.get("more_details"):
             lines.append(f"\n📝 **توضیحات:**\n{prod['more_details']}")
+
+    # افزودن ضمانت اصالت و گارانتی به تمامی محصولات
+    lines.append("▫️ **ضمانت اصالت:** ۱۰۰٪ اورجینال با تضمین کتبی")
+    lines.append("▫️ **گارانتی:** ۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش")
 
     return "\n".join(lines)
 

@@ -10,14 +10,23 @@ import json
 import hashlib
 from typing import List, Dict, Any, Optional
 
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    Update
-)
-from telegram.ext import ContextTypes
+try:
+    from telegram import (
+        InlineKeyboardButton,
+        InlineKeyboardMarkup,
+        ReplyKeyboardMarkup,
+        KeyboardButton,
+        Update
+    )
+    from telegram.ext import ContextTypes
+except ImportError:
+    InlineKeyboardButton = object
+    InlineKeyboardMarkup = object
+    ReplyKeyboardMarkup = object
+    KeyboardButton = object
+    Update = object
+    class ContextTypes:
+        DEFAULT_TYPE = Any
 
 try:
     import config
@@ -26,7 +35,7 @@ except ImportError:
 
 ADMIN_IDS = getattr(config, "ADMIN_IDS", [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()] if os.getenv("ADMIN_IDS") else [])
 SUPPORT_USERNAME = getattr(config, "SUPPORT_USERNAME", "@AiKala_Admin")
-PRICE_NOTE = getattr(config, "PRICE_NOTE", "⚠️ به علت نوسانات ارز، استعلام قیمت قطعی و موجودی پیش از ارسال ضروری است.")
+PRICE_NOTE = getattr(config, "PRICE_NOTE", "⚠️ به علت نوسانات لحظه‌ای ارز، استعلام قیمت قطعی قبل از بارگیری الزامی است.")
 
 from search_engine import clean_key
 
@@ -115,7 +124,7 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
     if status_raw == "b" and (isinstance(raw_price, (int, float)) and raw_price > 0):
         status_text = "✅ موجود در انبار"
     elif status_raw == "i":
-        status_text = "📞 استعلام تلفنی"
+        status_text = "از دکمه استعلام قیمت کمک بگیر"
     else:
         status_text = "❌ ناموجود"
 
@@ -129,10 +138,14 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
     specs_lines = []
     if isinstance(specs, dict):
         for k, v in specs.items():
-            if v:
+            if v and k not in ["ضمانت اصالت", "گارانتی"]:
                 specs_lines.append(f"▫️ <b>{k}:</b> {v}")
 
-    specs_str = "\n".join(specs_lines) if specs_lines else "▫️ دارای ضمانت اصالت کتبی و گارانتی معتبر شرکتی"
+    # افزودن ضمانت اصالت و گارانتی به تمامی محصولات
+    specs_lines.append("▫️ <b>ضمانت اصالت:</b> ۱۰۰٪ اورجینال با تضمین کتبی")
+    specs_lines.append("▫️ <b>گارانتی:</b> ۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش")
+
+    specs_str = "\n".join(specs_lines)
 
     msg = (
         f"🌟 <b>{name}</b>\n"

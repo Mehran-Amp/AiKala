@@ -326,6 +326,12 @@ def load_json_products(file_path: Optional[str] = None):
                     if p.get("baskets"): specs_dict["تعداد سبد"] = p["baskets"]
                     if p.get("subcategory"): specs_dict["زیرشاخه"] = p["subcategory"]
                     if p.get("score"): specs_dict["امتیاز کیفی"] = f"⭐️ {p['score']} از ۱۰"
+                    if p.get("ai_specs") and isinstance(p["ai_specs"], dict):
+                        for k, v in p["ai_specs"].items():
+                            if k not in ["ضمانت اصالت", "گارانتی"]:
+                                specs_dict[k] = v
+                    specs_dict["ضمانت اصالت"] = "۱۰۰٪ اورجینال با تضمین کتبی"
+                    specs_dict["گارانتی"] = "۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش"
 
                     if specs_dict:
                         p["specs"] = specs_dict
