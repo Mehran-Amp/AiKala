@@ -189,17 +189,19 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
 
 # ─── کیبورد زیر هر کارت کالا ───
 
-def product_inline_keyboard(pid: str, context: Optional[ContextTypes.DEFAULT_TYPE] = None) -> InlineKeyboardMarkup:
-    """دکمه‌های اقدام زیر کارت کالا: استعلام قیمت و کرایه، تصاویر محصول، تماس با پشتیبانی"""
+def product_inline_keyboard(pid: str, context: Optional[ContextTypes.DEFAULT_TYPE] = None, show_photo_button: bool = True) -> InlineKeyboardMarkup:
+    """دکمه‌های اقدام زیر کارت کالا: استعلام قیمت و کرایه، تصاویر محصول (در صورت نبود تصویر)، تماس با پشتیبانی"""
     pid_str = str(pid if pid is not None else "").strip()
+    action_row = []
+    if show_photo_button:
+        action_row.append(InlineKeyboardButton("📸 تصاویر محصول", callback_data=make_safe_cb("req_img", pid_str)))
+    action_row.append(InlineKeyboardButton("📞 پشتیبانی و مشاوره", callback_data="show_support"))
+
     buttons = [
         [
             InlineKeyboardButton("💰 استعلام قیمت تمام‌شده و کرایه", callback_data=make_safe_cb("inq", pid_str))
         ],
-        [
-            InlineKeyboardButton("📸 تصاویر محصول", callback_data=make_safe_cb("req_img", pid_str)),
-            InlineKeyboardButton("📞 پشتیبانی و مشاوره", callback_data="show_support")
-        ]
+        action_row
     ]
     return InlineKeyboardMarkup(buttons)
 

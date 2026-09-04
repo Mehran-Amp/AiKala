@@ -925,29 +925,57 @@ async def send_product_card_and_photos(chat_id: int, product: dict, context: Con
     except Exception as e:
         logger.debug(f"On-demand specs note: {e}")
 
-    pid = product.get("product_id", "")
+    pid = str(product.get("product_id", "")).strip()
     p_name = product.get("name", "")
+
+    # ۱. بررسی هوشمند وجود تصاویر تایید شده برای این کالا یا مدل/سری مشابه
+    matched_pid, photo_data, match_type = find_matching_verified_photos(product or pid)
+    photos_sent = False
+
+    if photo_data:
+        matched_note = None
+        if match_type == "similar":
+            sim_name = photo_data.get("product_name", "")
+            if sim_name and sim_name != p_name:
+                matched_note = f"تصاویر مربوط به سری و مدل مشابه ({sim_name}) می‌باشد."
+
+        logger.info(f"📸 [DISPATCH] Verified/similar photos found for '{p_name}' (match: {match_type}). Sending album first...")
+        photos_sent = await send_verified_photos_to_user(
+            bot=context.bot,
+            chat_id=chat_id,
+            pid=pid,
+            product_name=p_name,
+            photo_data=photo_data,
+            matched_note=matched_note
+        )
+
+    # اگر عکس ارسال شده باشد، دکمه «تصاویر محصول» دیگر نیاز نیست
+    show_photo_btn = not photos_sent
+
     msg = build_boxed_product_message(product)
-    kb = product_inline_keyboard(pid, context)
+    kb = product_inline_keyboard(pid, context, show_photo_button=show_photo_btn)
 
-    logger.info(f"📤 [DISPATCH] Sending product card for '{p_name}' (ID: {pid}) to Chat: {chat_id}")
+    logger.info(f"📤 [DISPATCH] Sending product info box for '{p_name}' (ID: {pid}) to Chat: {chat_id} (show_photo_btn={show_photo_btn})")
 
-    img_url = product.get("image_url", "")
-    if img_url and img_url.startswith("http"):
-        try:
-            m_obj, _ = await resolve_media_for_telegram(img_url)
-            if m_obj:
-                if hasattr(m_obj, "seek"):
-                    m_obj.seek(0)
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=m_obj,
-                    caption=msg,
-                    reply_markup=kb,
-                    parse_mode="HTML"
-                )
-                return
-        except Exception as e:
-            logger.warning(f"Failed to send web image for {p_name}: {e}")
+    # اگر تصاویر آلبوم تایید شده ارسال نشد، آیا عکس وب‌سایتی تکی موجود است؟
+    if not photos_sent:
+        img_url = product.get("image_url", "")
+        if img_url and img_url.startswith("http"):
+            try:
+                m_obj, _ = await resolve_media_for_telegram(img_url)
+                if m_obj:
+                    if hasattr(m_obj, "seek"):
+                        m_obj.seek(0)
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=m_obj,
+                        caption=msg,
+                        reply_markup=product_inline_keyboard(pid, context, show_photo_button=False),
+                        parse_mode="HTML"
+                    )
+                    return
+            except Exception as e:
+                logger.warning(f"Failed to send web image for {p_name}: {e}")
 
+    # ارسال پنجره مشخصات و قیمت همراه با کیبورد بهینه‌شده
     await context.bot.send_message(chat_id=chat_id, text=msg, reply_markup=kb, parse_mode="HTML")
