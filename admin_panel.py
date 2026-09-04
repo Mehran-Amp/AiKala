@@ -37,6 +37,8 @@ from photo_service import (
     find_matching_verified_photos,
     parse_telegram_post_link,
     probe_telegram_channel_album,
+    probe_telegram_channel_album_and_caption,
+    clean_channel_caption,
     send_verified_photos_to_user
 )
 
@@ -63,6 +65,7 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💻 استخراج لیست قیمت لپ‌تاپ از عکس", callback_data="adm_upload_laptop_photo")],
         [InlineKeyboardButton("📸 تصاویر تایید شده محصولات", callback_data="adm_verified_photos")],
         [InlineKeyboardButton("👥 مدیریت کارشناسان پشتیبانی", callback_data="adm_manage_support")],
         [InlineKeyboardButton("📡 مدیریت کانال‌های تحت پایش", callback_data="adm_channels")],
@@ -216,6 +219,7 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
     msg_ids = []
     file_ids = []
     post_link = ""
+    detected_caption = (update.message.caption or "").strip()
 
     # ۱. آیا پیام از کانال عکس فوروارد شده است؟
     if getattr(update.message, 'forward_origin', None):
@@ -309,8 +313,8 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
         target_mid = final_msg_ids[0]
         ch_clean = str(channel).replace("@", "").strip()
         if not ch_clean.startswith("-"):
-            logger.info(f"🌐 [ADMIN INPUT] Probing channel album via public embed for {ch_clean}/{target_mid}...")
-            scraped_photos, scraped_mids = await probe_telegram_channel_album(ch_clean, target_mid)
+            logger.info(f"🌐 [ADMIN INPUT] Probing channel album & caption via public embed for {ch_clean}/{target_mid}...")
+            scraped_photos, scraped_mids, scraped_caption = await probe_telegram_channel_album_and_caption(ch_clean, target_mid)
             if scraped_photos:
                 logger.info(f"🎉 [ADMIN INPUT] Successfully extracted {len(scraped_photos)} album photos from embed!")
                 for sp in scraped_photos:
@@ -319,6 +323,9 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
                 for sm in scraped_mids:
                     if sm not in final_msg_ids:
                         final_msg_ids.append(sm)
+            if not detected_caption and scraped_caption:
+                detected_caption = scraped_caption
+                logger.info(f"📝 [ADMIN INPUT] Extracted caption from embed ({len(scraped_caption)} chars)")
 
     # ۴. پویش تکمیلی از طریق فوروارد با مدیریت ایمن خطا (جهت استخراج تمام عکس‌های آلبوم)
     if channel and final_msg_ids and len(final_file_ids) < max(len(final_msg_ids), 2):
@@ -342,6 +349,8 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
                             message_id=mid
                         )
                         probed_msgs.append(fwd.message_id)
+                        if not detected_caption and (fwd.caption or fwd.text):
+                            detected_caption = (fwd.caption or fwd.text or "").strip()
                         if fwd.photo:
                             tfid = fwd.photo[-1].file_id
                             if tfid not in final_file_ids:
@@ -359,6 +368,8 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
                     message_id=target_mid
                 )
                 probed_msgs.append(fwd_target.message_id)
+                if not detected_caption and (fwd_target.caption or fwd_target.text):
+                    detected_caption = (fwd_target.caption or fwd_target.text or "").strip()
 
                 base_orig_date = get_msg_orig_date(fwd_target)
                 base_mg_id = getattr(fwd_target, 'media_group_id', None)
@@ -457,6 +468,7 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
     prod_model = ""
     prod_brand = ""
     prod_cat = ""
+    prod_obj = None
     try:
         from search_engine import JSON_PRODUCTS
         prod_obj = next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
@@ -467,6 +479,10 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
     except Exception:
         pass
 
+    clean_caption = clean_channel_caption(detected_caption) if detected_caption else ""
+    if prod_obj and clean_caption:
+        prod_obj["extra_description"] = clean_caption
+
     save_verified_product_entry(
         pid=pid,
         product_name=pname,
@@ -476,7 +492,8 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
         link=post_link,
         model_number=prod_model,
         brand=prod_brand,
-        category=prod_cat
+        category=prod_cat,
+        caption=clean_caption
     )
     context.user_data.pop("awaiting_product_image_link", None)
 
@@ -522,11 +539,13 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
         PENDING_IMAGE_REQUESTS.pop(sc_pid, None)
 
     total_photos_detected = len(final_file_ids) if final_file_ids else len(final_msg_ids)
+    desc_status = f"📝 <b>توضیحات تکمیلی:</b> {len(clean_caption)} کاراکتر استخراج و به مشخصات فنی کالا پیوست شد.\n" if clean_caption else ""
     await update.message.reply_text(
         f"✅ <b>تصاویر محصول با موفقیت تایید و ثبت شد!</b>\n\n"
         f"📦 <b>محصول:</b> {pname}\n"
         f"🖼 <b>تعداد تصاویر کشف شده آلبوم:</b> {total_photos_detected} عکس\n"
         f"🔗 <b>مرجع تصاویر:</b> <code>{post_link or final_msg_ids}</code>\n"
+        f"{desc_status}"
         f"👥 <b>ارسال آنی برای کاربران در انتظار:</b> {sent_count} کاربر\n\n"
         f"✨ <i>از این لحظه، هر کاربری دکمه «📸 تصاویر محصول» این کالا یا مدل‌های مشابه آن را لمس کند، کل آلبوم {total_photos_detected} تایی به صورت خودکار برای او ارسال خواهد شد.</i>",
         parse_mode="HTML"

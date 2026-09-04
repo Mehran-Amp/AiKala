@@ -174,6 +174,26 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
 
     specs_str = "\n".join(specs_lines)
 
+    # بررسی توضیحات تکمیلی تایید شده توسط ادمین (کپشن پست محصول)
+    extra_desc = p.get("extra_description") or ""
+    if not extra_desc:
+        try:
+            from photo_service import get_verified_product_caption
+            pid = p.get("product_id") or p.get("id")
+            if pid:
+                extra_desc = get_verified_product_caption(pid)
+        except Exception:
+            pass
+
+    extra_desc_block = ""
+    if extra_desc and extra_desc.strip():
+        clean_desc = extra_desc.strip()
+        extra_desc_block = (
+            f"\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"📝 <b>توضیحات تکمیلی محصول:</b>\n"
+            f"{clean_desc}\n"
+        )
+
     msg = (
         f"🌟 <b>{name}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -182,7 +202,8 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
         f"📦 <b>وضعیت موجودی:</b> {status_text}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📋 <b>مشخصات فنی کالا:</b>\n"
-        f"{specs_str}\n\n"
+        f"{specs_str}\n"
+        f"{extra_desc_block}\n"
         f"{PRICE_NOTE}"
     )
     return msg

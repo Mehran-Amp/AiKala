@@ -47,7 +47,13 @@ logger = logging.getLogger(__name__)
 
 # ─── ماژول‌های سیستم ───
 from database import Database
-from search_engine import JSON_PRODUCTS, search_products, _normalize_digits
+from search_engine import JSON_PRODUCTS, search_products, _normalize_digits, load_json_products
+from laptop_extractor import (
+    extract_laptops_from_image,
+    merge_extracted_laptops,
+    format_laptops_preview_for_admin,
+    load_laptops_catalog
+)
 from bot_catalog import (
     get_main_categories_markup,
     get_category_sub_markup,
@@ -147,6 +153,67 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if adm and context.user_data.get("awaiting_support_agent_step"):
         handled = await handle_admin_support_agent_input(update, context)
         if handled:
+            return
+
+    # پردازش دریافت عکس لیست قیمت لپ‌تاپ توسط ادمین
+    if adm and (context.user_data.get("awaiting_laptop_photo") or (update.message.photo and context.user_data.get("awaiting_laptop_photo"))):
+        photo = update.message.photo[-1] if update.message.photo else None
+        doc = update.message.document if (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith("image/")) else None
+
+        text_input = update.message.text.strip() if update.message.text else ""
+        if not photo and not doc:
+            if text_input in ["انصراف", "لغو", "بازگشت"]:
+                context.user_data.pop("awaiting_laptop_photo", None)
+                await update.message.reply_text("❌ عملیات استخراج تصویر لپ‌تاپ لغو شد.")
+                return
+            await update.message.reply_text(
+                "📸 لطفاً <b>عکس یا اسکرین‌شات جدول قیمت لپ‌تاپ</b> را ارسال فرمایید (یا برای انصراف کلمه <code>لغو</code> را بفرستید).",
+                parse_mode="HTML"
+            )
+            return
+
+        status_msg = await update.message.reply_text(
+            "⏳ <b>در حال تحلیل هوشمند تصویر جدول با هوش مصنوعی بینایی ماشین Gemini...</b>\n"
+            "▫️ مشخصات فنی سطر به سطر در حال استخراج هستند.\n"
+            "🛡 ستون قیمت همکار و اطلاعات تماس به صورت خودکار فیلتر می‌شوند.\n"
+            "<i>لطفاً چند لحظه شکیبا باشید...</i>",
+            parse_mode="HTML"
+        )
+
+        try:
+            file_obj = await (photo.get_file() if photo else doc.get_file())
+            img_bytes = await file_obj.download_as_bytearray()
+            mime = "image/jpeg" if photo else (doc.mime_type or "image/jpeg")
+
+            extracted = extract_laptops_from_image(bytes(img_bytes), mime_type=mime)
+            if not extracted:
+                await status_msg.edit_text(
+                    "⚠️ متأسفانه هیچ سطری از مشخصات لپ‌تاپ در این تصویر شناسایی نشد.\n"
+                    "لطفاً از وضوح تصویر و خوانا بودن ستون‌های جدول اطمینان حاصل کرده و مجدداً ارسال نمایید.",
+                    parse_mode="HTML"
+                )
+                return
+
+            context.user_data["pending_extracted_laptops"] = extracted
+            context.user_data.pop("awaiting_laptop_photo", None)
+
+            preview_text = format_laptops_preview_for_admin(extracted, max_display=10)
+            confirm_kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(f"✅ تایید و ثبت {len(extracted)} لپ‌تاپ در فروشگاه", callback_data="adm_confirm_laptops"),
+                    InlineKeyboardButton("❌ انصراف", callback_data="adm_cancel_laptops")
+                ],
+                [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+            ])
+            await status_msg.edit_text(preview_text, reply_markup=confirm_kb, parse_mode="HTML")
+            return
+        except Exception as err:
+            logger.error(f"Error extracting laptops from image: {err}")
+            await status_msg.edit_text(
+                f"❌ <b>خطا در پردازش تصویر با هوش مصنوعی:</b>\n<code>{err}</code>\n\n"
+                "💡 <i>لطفاً از تنظیم صحیح کلید GEMINI_API_KEY در تنظیمات یا فایل .env اطمینان حاصل فرمایید.</i>",
+                parse_mode="HTML"
+            )
             return
 
     text = update.message.text.strip() if update.message.text else ""
@@ -278,9 +345,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
 
-        # ارسال پیام به تمام ادمین‌ها با دکمه پاسخ
+        # ارسال پیام به تمام ادمین‌ها با دکمه پاسخ و دکمه اتمام موجودی
         admin_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✍️ پاسخ به استعلام قیمت", callback_data=f"ans_inq|{req_id}")]
+            [
+                InlineKeyboardButton("✍️ پاسخ به استعلام قیمت", callback_data=f"ans_inq|{req_id}"),
+                InlineKeyboardButton("❌ اتمام موجودی", callback_data=f"out_of_stock|{req_id}")
+            ]
         ])
         user_info = f"@{user.username}" if user.username else user.first_name
         catalog_price = prod.get("price", "درج نشده") if prod else "درج نشده"
@@ -516,6 +586,46 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f"<i>(این قیمت مبنای اصلی قرار گرفته و مبلغ بیعانه ۸٪ جهت واریز و صدور پیش‌فاکتور خودکار محاسبه می‌شود - مثال: ۳۸,۵۰۰,۰۰۰ یا 38500000)</i>"
         )
         await query.message.reply_text(admin_prompt, parse_mode="HTML")
+
+    elif data.startswith("out_of_stock|"):
+        user_id = query.from_user.id
+        if not is_admin(user_id):
+            await query.answer("⛔️ دسترسی به این بخش فقط مخصوص مدیران فروشگاه است.", show_alert=True)
+            return
+
+        req_id = int(data.split("|")[1])
+        inq = await db.get_price_inquiry(req_id)
+        if not inq:
+            await query.answer("❌ درخواست استعلام یافت نشد.", show_alert=True)
+            return
+
+        buyer_id = inq.get("user_id")
+        pname = inq.get("product_name", "کالا")
+
+        # دکمه‌های پیام ارسالی به خریدار
+        buyer_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗂 مشاهده همه دسته‌بندی‌های کالا", callback_data="cat_back")],
+            [InlineKeyboardButton("📞 مشاوره و پیشنهاد مدل جایگزین", callback_data="show_support")]
+        ])
+
+        buyer_notice = (
+            f"⚠️ <b>اطلاعیه وضعیت موجودی کالا</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"خریدار گرامی، متأسفانه موجودی انبار برای کالای <b>{pname}</b> در حال حاضر به پایان رسیده است.\n\n"
+            f"💡 پیشنهاد می‌کنیم جهت مشاهده و انتخاب مدل‌های مشابه و موجود در بازار، دسته‌بندی مربوط به این کالا را مشاهده فرمایید و یا با واحد مشاوره ما در ارتباط باشید."
+        )
+
+        try:
+            await context.bot.send_message(
+                chat_id=buyer_id,
+                text=buyer_notice,
+                reply_markup=buyer_kb,
+                parse_mode="HTML"
+            )
+            await query.answer("✅ پیام اتمام موجودی برای خریدار ارسال گردید.", show_alert=True)
+        except Exception as e:
+            logger.error(f"Failed to send out-of-stock notice to buyer {buyer_id}: {e}")
+            await query.answer("⚠️ خطا در ارسال پیام به خریدار (احتمالاً چت با ربات مسدود است)", show_alert=True)
 
     elif data == "adm_sync_photos":
         await query.answer()

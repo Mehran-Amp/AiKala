@@ -81,6 +81,13 @@ BRAND_SYNONYMS: Dict[str, List[str]] = {
     "سیلور کرست": ["سیلور کرست", "سیلورکرست", "silvercrest"],
     "بایترون": ["بایترون", "bitron"],
     "تکنو": ["تکنو", "tecno"],
+    "اچ پی": ["اچ پی", "اچ‌پی", "hp", "hewlett packard"],
+    "ایسوس": ["ایسوس", "asus"],
+    "لنوو": ["لنوو", "lenovo"],
+    "دل": ["دل", "dell"],
+    "اپل": ["اپل", "apple", "macbook", "مک بوک"],
+    "ایسر": ["ایسر", "acer"],
+    "ام اس آی": ["ام اس آی", "ام‌اس‌ای", "msi"],
 }
 
 CATEGORY_SYNONYMS: Dict[str, List[str]] = {
@@ -91,6 +98,7 @@ CATEGORY_SYNONYMS: Dict[str, List[str]] = {
     "کولر": ["کولر", "اسپلیت", "اسپیلت", "split", "کولرگازی", "کولر گازی", "داکت اسپلیت", "ایستاده", "کولر پنجره ای"],
     "جاروبرقی": ["جاروبرقی", "جارو برقی", "جاروبرقي", "جارو", "مخزنی", "کیسه ای", "vacuum", "جارو شارژی", "جاروشارژی"],
     "مایکروویو": ["مایکروویو", "ماکروویو", "ماکروفر", "مایکروفر", "سولاردام", "سولاردوم", "microwave", "solardom"],
+    "لپ‌تاپ": ["لپ‌تاپ", "لپتاپ", "لپ تاپ", "laptop", "نوت بوک", "notebook"],
 }
 
 BRAND_AND_CATEGORY_SYNONYMS = {**BRAND_SYNONYMS, **CATEGORY_SYNONYMS}
@@ -449,6 +457,35 @@ def load_json_products(file_path: Optional[str] = None):
             logger.info(f"[CACHE] Loaded {len(JSON_PRODUCTS)} UNIQUE products from {file_path} (Deduplicated)")
         except Exception as e:
             logger.warning(f"Error loading JSON products: {e}")
+
+    # بارگذاری لپ‌تاپ‌های استخراج‌شده از کاتالوگ لپ‌تاپ
+    laptops_file = "laptops_catalog.json"
+    if os.path.exists(laptops_file):
+        try:
+            with open(laptops_file, "r", encoding="utf-8") as lf:
+                laptops_data = json.load(lf)
+                if isinstance(laptops_data, list):
+                    l_count = 0
+                    for lp in laptops_data:
+                        lid = lp.get("id") or f"LAP_{lp.get('brand')}_{lp.get('model')}"
+                        # تطبیق کلیدهای لازم برای سازگاری با سیستم نمایش کالا
+                        if "name" not in lp and "title" in lp:
+                            lp["name"] = lp["title"]
+                        if "category_key" not in lp:
+                            lp["category_key"] = "laptop"
+                        if "category_name" not in lp:
+                            lp["category_name"] = "لپ‌تاپ"
+                        if "category" not in lp:
+                            lp["category"] = "لپ‌تاپ"
+                        if "product_id" not in lp:
+                            lp["product_id"] = lid
+                        if lid not in seen_keys:
+                            seen_keys.add(lid)
+                            JSON_PRODUCTS.append(lp)
+                            l_count += 1
+                    logger.info(f"[CACHE] Loaded {l_count} laptops from {laptops_file}")
+        except Exception as le:
+            logger.warning(f"Error loading laptops from {laptops_file}: {le}")
 
 load_json_products()
 

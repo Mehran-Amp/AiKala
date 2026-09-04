@@ -15,6 +15,7 @@ import logging
 import asyncio
 import io
 import urllib.request
+import html as html_lib
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -114,6 +115,44 @@ def filter_model_tokens(tokens: set) -> set:
         if t not in KNOWN_DISPLAY_SIZES and t not in KNOWN_CAPACITY_NUMS and len(t) >= 2
     }
 
+def clean_channel_caption(text: str) -> str:
+    """
+    پالایش هوشمند متن کپشن پست کانال تلگرام برای استفاده به عنوان توضیحات تکمیلی کالا:
+    - حذف هشتگ‌ها (#سامسونگ #تلویزیون و ...)
+    - حذف آیدی‌ها و لینک‌های تلگرام و وب (@channel, t.me/..., http://...)
+    - حذف شماره تلفن‌ها و عبارات تبلیغاتی مثل 'جهت ثبت سفارش تماس بگیرید'
+    - حفظ کامل ویژگی‌ها، مشخصات و توضیحات فنی محصول
+    """
+    if not text:
+        return ""
+    lines = text.strip().split("\n")
+    cleaned_lines = []
+    for line in lines:
+        l = line.strip()
+        if not l:
+            continue
+        # حذف خطوطی که صرفاً هشتگ هستند
+        if re.match(r'^(?:#[\w_]+\s*)+$', l):
+            continue
+        # حذف خطوطی که حاوی آیدی یا لینک تلگرام یا وب هستند
+        if "@" in l or "t.me/" in l or "telegram.me/" in l or "http://" in l or "https://" in l or "www." in l:
+            continue
+        # حذف عبارات رایج تبلیغاتی یا دعوت به تماس در انتهای پست
+        if any(term in l for term in [
+            "جهت ثبت سفارش", "جهت خرید", "جهت سفارش", "ثبت سفارش",
+            "ارتباط با ما", "تماس با ما", "شماره تماس", "مشاوره و خرید",
+            "کانال ما", "کانال تلگرام", "لینک کانال", "آیدی سفارش", "پیوی",
+            "ادمین کانال", "واحد فروش", "پاسخگویی"
+        ]):
+            continue
+        # حذف خطوط شماره موبایل
+        if re.match(r'^(?:تلفن|موبایل|تماس)?\s*[:\-\s]*09\d{9}\b', l) or re.match(r'^\+?98\d{10}$', l):
+            continue
+        cleaned_lines.append(l)
+
+    res = "\n".join(cleaned_lines).strip()
+    return res
+
 def save_verified_product_entry(
     pid: str,
     product_name: str,
@@ -124,9 +163,10 @@ def save_verified_product_entry(
     model_number: str = "",
     brand: str = "",
     category: str = "",
+    caption: str = "",
     extra_data: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
-    """ذخیره دائمی و همیشگی تصاویر تایید شده محصول به همراه شناسه‌های دقیق مدل برای ارجاع خودکار به مدل‌های مشابه"""
+    """ذخیره دائمی و همیشگی تصاویر تایید شده محصول به همراه شناسه‌های دقیق مدل و توضیحات استخراج‌شده از پست"""
     global VERIFIED_PRODUCT_PHOTOS
     clean_pid = str(pid).strip()
 
@@ -139,6 +179,9 @@ def save_verified_product_entry(
     color = extract_color_from_text(product_name)
     capacity = extract_capacity_from_text(product_name)
 
+    existing_entry = VERIFIED_PRODUCT_PHOTOS.get(clean_pid, {})
+    clean_cap = clean_channel_caption(caption) if caption else existing_entry.get("caption", "")
+
     entry = {
         "product_id": clean_pid,
         "product_name": product_name,
@@ -149,6 +192,7 @@ def save_verified_product_entry(
         "model_number": model_number,
         "brand": det_brand,
         "category": det_cat,
+        "caption": clean_cap,
         "model_codes": filtered_tokens,
         "cores": cores,
         "color": color,
@@ -160,8 +204,15 @@ def save_verified_product_entry(
 
     VERIFIED_PRODUCT_PHOTOS[clean_pid] = entry
     save_verified_photos()
-    logger.info(f"💾 [VERIFIED_PHOTOS] Saved persistent entry for pid={clean_pid} ({product_name}). Model codes: {filtered_tokens}, Cores: {cores}")
+    logger.info(f"💾 [VERIFIED_PHOTOS] Saved persistent entry for pid={clean_pid} ({product_name}). Caption length: {len(clean_cap)} chars.")
     return entry
+
+def get_verified_product_caption(target_prod_or_pid: Any) -> str:
+    """دریافت توضیحات تکمیلی تایید شده محصول (یا مدل مشابه)"""
+    pid, pdata, _ = find_matching_verified_photos(target_prod_or_pid)
+    if pdata and pdata.get("caption"):
+        return pdata.get("caption", "").strip()
+    return ""
 
 def find_matching_verified_photos(target_prod_or_pid: Any) -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
     """
@@ -441,10 +492,22 @@ def parse_telegram_post_link(text: str) -> Optional[Tuple[str, List[int]]]:
 
 # ─── اسکرپر وب‌ویجت امبد تلگرام ───
 
-async def scrape_telegram_embed_photos(channel_name: str, msg_id: int) -> List[str]:
+def extract_text_from_telegram_embed_html(html: str) -> str:
+    """استخراج متن و کپشن پست از کدهای HTML ویجت تلگرام"""
+    if not html:
+        return ""
+    match = re.search(r'<div class="[^"]*tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', html, re.DOTALL)
+    if not match:
+        return ""
+    raw_text = match.group(1)
+    raw_text = re.sub(r'<br\s*/?>', '\n', raw_text)
+    raw_text = re.sub(r'</?(?:p|div)[^>]*>', '\n', raw_text)
+    raw_text = re.sub(r'<[^>]+>', '', raw_text)
+    return html_lib.unescape(raw_text).strip()
+
+async def scrape_telegram_embed_photos_and_caption(channel_name: str, msg_id: int) -> Tuple[List[str], str]:
     """
-    استخراج آنی و قطعی تصاویر آلبوم از ویجت عمومی تلگرام (Telegram Embed)
-    بدون نیاز به عضویت یا دسترسی ادمین ربات در کانال و بدون خطای 400 Bad Request
+    استخراج آنی و قطعی تصاویر آلبوم و کپشن متن از ویجت عمومی تلگرام (Telegram Embed)
     """
     ch = str(channel_name).replace("@", "").strip()
     url = f"https://t.me/{ch}/{msg_id}?embed=1"
@@ -460,7 +523,9 @@ async def scrape_telegram_embed_photos(channel_name: str, msg_id: int) -> List[s
             
     html = await asyncio.to_thread(_fetch)
     if not html or "tgme_widget_message_error" in html or "Post not found" in html:
-        return []
+        return [], ""
+
+    caption = extract_text_from_telegram_embed_html(html)
 
     # استخراج لینک‌های مستقیم تصاویر در ابعاد بزرگ از cdn تلگرام
     raw_urls = re.findall(r"background-image:url\(\x27(https://[^\x27]+)\x27\)", html)
@@ -469,31 +534,37 @@ async def scrape_telegram_embed_photos(channel_name: str, msg_id: int) -> List[s
         if "emoji" not in u and ("telesco.pe" in u or "cdn" in u or "telegram" in u):
             if u not in clean_urls:
                 clean_urls.append(u)
-    return clean_urls
+    return clean_urls, caption
 
-async def probe_telegram_channel_album(channel_name: str, base_mid: int) -> Tuple[List[str], List[int]]:
+async def scrape_telegram_embed_photos(channel_name: str, msg_id: int) -> List[str]:
+    """استخراج تصاویر آلبوم از وب‌ویجت تلگرام (حفظ سازگاری قبلی)"""
+    photos, _ = await scrape_telegram_embed_photos_and_caption(channel_name, msg_id)
+    return photos
+
+async def probe_telegram_channel_album_and_caption(channel_name: str, base_mid: int) -> Tuple[List[str], List[int], str]:
     """
-    پویش جامع استخراج آلبوم کامل از کانال عمومی تلگرام:
-    ۱. استخراج تصاویر گروپ‌شده (MediaGroup) از پیام اصلی
+    پویش جامع استخراج آلبوم کامل و متن کپشن از کانال عمومی تلگرام:
+    ۱. استخراج تصاویر گروپ‌شده (MediaGroup) و کپشن از پیام اصلی
     ۲. در صورت تک‌تصویر بودن، پویش پیام‌های متوالی مجاور (عقب و جلو)
     """
     logger.info(f"🔍 [PROBE] Scraping channel {channel_name} around message {base_mid} via Telegram Public Embed...")
     discovered_photos: List[str] = []
     discovered_mids: List[int] = [base_mid]
+    main_caption: str = ""
     
-    # ۱. استخراج عکس‌های موجود در خود پست
-    main_photos = await scrape_telegram_embed_photos(channel_name, base_mid)
+    # ۱. استخراج عکس‌ها و کپشن موجود در خود پست
+    main_photos, main_caption = await scrape_telegram_embed_photos_and_caption(channel_name, base_mid)
     for p in main_photos:
         if p not in discovered_photos:
             discovered_photos.append(p)
             
-    logger.info(f"🔍 [PROBE] Main post {base_mid} returned {len(main_photos)} direct photos")
+    logger.info(f"🔍 [PROBE] Main post {base_mid} returned {len(main_photos)} direct photos and caption len={len(main_caption)}")
     
     # ۲. اگر در پیام مبنا فقط ۱ عکس یا کمتر یافت شد، پیام‌های قبل و بعد را پویش می‌کنیم
     if len(discovered_photos) <= 1:
         # الف) پویش عقب‌گرد (base_mid - 1 تا base_mid - 10)
         for prev_id in range(base_mid - 1, max(1, base_mid - 10), -1):
-            p_photos = await scrape_telegram_embed_photos(channel_name, prev_id)
+            p_photos, p_cap = await scrape_telegram_embed_photos_and_caption(channel_name, prev_id)
             if p_photos:
                 logger.info(f"   ➕ [PROBE] Discovered {len(p_photos)} photo(s) at previous msg {prev_id}")
                 for p in p_photos:
@@ -501,12 +572,14 @@ async def probe_telegram_channel_album(channel_name: str, base_mid: int) -> Tupl
                         discovered_photos.insert(0, p)
                 if prev_id not in discovered_mids:
                     discovered_mids.insert(0, prev_id)
+                if not main_caption and p_cap:
+                    main_caption = p_cap
             else:
                 break
                 
         # ب) پویش پیش‌رو (base_mid + 1 تا base_mid + 10)
         for next_id in range(base_mid + 1, base_mid + 10):
-            n_photos = await scrape_telegram_embed_photos(channel_name, next_id)
+            n_photos, n_cap = await scrape_telegram_embed_photos_and_caption(channel_name, next_id)
             if n_photos:
                 logger.info(f"   ➕ [PROBE] Discovered {len(n_photos)} photo(s) at next msg {next_id}")
                 for p in n_photos:
@@ -514,11 +587,18 @@ async def probe_telegram_channel_album(channel_name: str, base_mid: int) -> Tupl
                         discovered_photos.append(p)
                 if next_id not in discovered_mids:
                     discovered_mids.append(next_id)
+                if not main_caption and n_cap:
+                    main_caption = n_cap
             else:
                 break
 
     logger.info(f"🔍 [PROBE RESULT] Found total {len(discovered_photos)} photos and {len(discovered_mids)} msg IDs for {channel_name}/{base_mid}")
-    return discovered_photos, discovered_mids
+    return discovered_photos, discovered_mids, main_caption
+
+async def probe_telegram_channel_album(channel_name: str, base_mid: int) -> Tuple[List[str], List[int]]:
+    """سازگاری با کدهای قبلی"""
+    photos, mids, _ = await probe_telegram_channel_album_and_caption(channel_name, base_mid)
+    return photos, mids
 
 # ─── حل‌کننده باینری عکس‌ها جهت رفع webpage_curl_failed ───
 

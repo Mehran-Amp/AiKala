@@ -123,6 +123,23 @@ def get_product_card(prod: dict) -> str:
         elif prod.get("more_details"):
             lines.append(f"\n📝 **مشخصات فنی:**\n{prod['more_details']}")
 
+    elif cat == "laptop" or prod.get("category") == "لپ‌تاپ" or prod.get("category_name") == "لپ‌تاپ":
+        specs = prod.get("specs", {})
+        if specs.get("کد مدل"):
+            lines.append(f"▫️ **کد کالا:** `{specs['کد مدل']}`")
+        if specs.get("پردازنده (CPU)"):
+            lines.append(f"▫️ **پردازنده (CPU):** {specs['پردازنده (CPU)']}")
+        if specs.get("حافظه رم (RAM)"):
+            lines.append(f"▫️ **حافظه رم:** {specs['حافظه رم (RAM)']}")
+        if specs.get("حافظه داخلی (SSD/HDD)"):
+            lines.append(f"▫️ **حافظه داخلی:** {specs['حافظه داخلی (SSD/HDD)']}")
+        if specs.get("کارت گرافیک (GPU)"):
+            lines.append(f"▫️ **گرافیک:** {specs['کارت گرافیک (GPU)']}")
+        if specs.get("صفحه نمایش"):
+            lines.append(f"▫️ **صفحه نمایش:** {specs['صفحه نمایش']}")
+        if specs.get("گرید و تمیزی"):
+            lines.append(f"▫️ **گرید سلامت دستگاه:** ⭐️ {specs['گرید و تمیزی']}")
+
     # افزودن ضمانت اصالت و گارانتی به تمامی محصولات
     lines.append("▫️ **ضمانت اصالت:** ۱۰۰٪ اورجینال با تضمین کتبی")
     lines.append("▫️ **گارانتی:** ۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش")
@@ -169,18 +186,39 @@ def get_product_by_id(pid: str) -> Optional[dict]:
 # ─── سیستم ناوبری تعاملی و پویای دسته‌بندی‌ها ───
 
 def load_categories_tree() -> dict:
+    tree = {}
     if os.path.exists(CATEGORIES_FILE):
         try:
             with open(CATEGORIES_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                tree = json.load(f)
+        except Exception:
+            tree = {}
+
+    # بارگذاری پویا و خودکار لپ‌تاپ‌ها از کاتالوگ لپ‌تاپ
+    if os.path.exists("laptops_catalog.json"):
+        try:
+            with open("laptops_catalog.json", "r", encoding="utf-8") as lf:
+                laptops = json.load(lf)
+                if isinstance(laptops, list) and laptops:
+                    brand_map = {}
+                    for item in laptops:
+                        b = str(item.get("brand", "HP")).strip().upper()
+                        pid = item.get("product_id") or item.get("id")
+                        if pid:
+                            brand_map.setdefault(b, []).append(pid)
+                    tree["laptop"] = {
+                        "title": "💻 لپ‌تاپ",
+                        "brands": brand_map
+                    }
         except Exception:
             pass
-    return {}
+
+    return tree
 
 def get_main_categories_markup():
     tree = load_categories_tree()
     buttons = []
-    order = ["tv", "conditioner", "refrigerator", "washing_machine", "dishwasher", "small_appliances"]
+    order = ["tv", "conditioner", "refrigerator", "washing_machine", "dishwasher", "small_appliances", "laptop"]
     row = []
     for cat_key in order:
         cat_data = tree.get(cat_key, {})
@@ -206,6 +244,32 @@ def get_category_sub_markup(cat_key: str) -> Tuple[str, Any]:
     cat_data = tree.get(cat_key, {})
     title = cat_data.get("title", cat_key)
     buttons = []
+
+    if cat_key == "laptop":
+        brands_dict = cat_data.get("brands", {})
+        row = []
+        for b_name, pids in brands_dict.items():
+            count = len(pids) if isinstance(pids, list) else 0
+            btn_text = f"💻 {b_name} ({count})"
+            cb = make_safe_cb("cat_opt", f"laptop:brands:{b_name}")
+            row.append(InlineKeyboardButton(btn_text, callback_data=cb))
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        buttons.append([
+            InlineKeyboardButton("📋 مشاهده همه مدل‌های لپ‌تاپ", callback_data=make_safe_cb("cat_all", "laptop")),
+            InlineKeyboardButton("🔙 بازگشت به دسته‌ها", callback_data="cat_back")
+        ])
+        all_laptops_count = sum(len(pids) for pids in brands_dict.values() if isinstance(pids, list))
+        msg_text = (
+            f"💻 <b>دسته‌بندی لپ‌تاپ (انتخاب بر اساس برند):</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 تعداد کل مدل‌های موجود: <b>{all_laptops_count} مدل</b>\n\n"
+            f"🔍 لطفاً برند لپ‌تاپ مورد نظر خود را انتخاب فرمایید:"
+        )
+        return msg_text, InlineKeyboardMarkup(buttons)
 
     if cat_key == "small_appliances":
         subcats = cat_data.get("subcategories", {})
