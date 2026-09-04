@@ -134,6 +134,95 @@ def call_deepseek_api(api_key: str, product_name: str, base_url: str = DEFAULT_B
         logger.error(f"Request failed for {cleaned_name}: {e}")
         return None
 
+def product_has_specs(product: dict) -> bool:
+    """بررسی اینکه آیا کالا از قبل دارای مشخصات فنی کامل است یا خیر"""
+    if not product:
+        return True
+    if product.get("ai_specs"):
+        return True
+    return bool(
+        product.get("panel") or product.get("assembly") or product.get("resolution") or 
+        product.get("temp_range") or product.get("key_features") or product.get("plan") or 
+        product.get("capacity_kg") or product.get("baskets")
+    )
+
+def _sync_save_product_update(pid: str, specs: dict):
+    """ذخیره دائمی مشخصات استخراج شده در catalog_products.json و دیتابیس محلی"""
+    try:
+        if not os.path.exists(CATALOG_FILE):
+            return
+        with open(CATALOG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        spec_str = " | ".join([f"{k}: {v}" for k, v in specs.items()])
+        if isinstance(data, dict):
+            if pid in data:
+                data[pid]["ai_specs"] = specs
+                data[pid]["more_details"] = spec_str
+            else:
+                for k, v in data.items():
+                    if str(v.get("product_id")) == str(pid):
+                        v["ai_specs"] = specs
+                        v["more_details"] = spec_str
+                        break
+        elif isinstance(data, list):
+            for item in data:
+                if str(item.get("product_id")) == str(pid):
+                    item["ai_specs"] = specs
+                    item["more_details"] = spec_str
+                    break
+
+        with open(CATALOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        logger.info(f"💾 [CACHE SAVED] مشخصات کالا {pid} برای همیشه در کاتالوگ ذخیره شد.")
+    except Exception as e:
+        logger.error(f"Error saving enriched product {pid} to catalog: {e}")
+
+async def async_enrich_product_on_demand(product: dict) -> bool:
+    """
+    تکمیل در لحظه مشخصات هنگام کلیک کاربر (Lazy Loading On-Demand):
+    ۱. بررسی می‌کند آیا کالا قبلاً مشخصات دارد؟ اگر بله، هیچ کار اضافه‌ای انجام نمی‌دهد (۰ توکن).
+    ۲. فقط کالاهای بدون مشخصات با DeepSeek استعلام شده و در لحظه برای کاربر نمایش داده می‌شوند.
+    ۳. نتیجه استخراج‌شده به صورت همزمان برای همیشه در کاتالوگ ذخیره می‌شود تا دفعات بعدی دیگر نیازی به هوش مصنوعی نباشد.
+    """
+    if not product or product_has_specs(product):
+        return False
+
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not api_key:
+        return False
+
+    base_url = os.getenv("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL).strip()
+    model = os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL).strip()
+    pname = product.get("name", "")
+    if not pname:
+        return False
+
+    # فراخوانی غیرمسدودکننده با تایم‌اوت مشخص جهت جلوگیری از توقف ربات
+    try:
+        specs = await asyncio.wait_for(
+            asyncio.to_thread(call_deepseek_api, api_key, pname, base_url, model),
+            timeout=7.0
+        )
+    except Exception as e:
+        logger.warning(f"On-demand DeepSeek enrichment note for {pname}: {e}")
+        return False
+
+    if specs and isinstance(specs, dict):
+        product["ai_specs"] = specs
+        if not isinstance(product.get("specs"), dict):
+            product["specs"] = {}
+        for k, v in specs.items():
+            product["specs"][k] = v
+        product["more_details"] = " | ".join([f"{k}: {v}" for k, v in specs.items()])
+
+        pid = str(product.get("product_id") or "")
+        if pid:
+            asyncio.create_task(asyncio.to_thread(_sync_save_product_update, pid, specs))
+        return True
+
+    return False
+
 def main():
     parser = argparse.ArgumentParser(description="DeepSeek Specs Enricher")
     parser.add_argument("--key", default="", help="DeepSeek API Key")

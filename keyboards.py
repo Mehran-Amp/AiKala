@@ -134,6 +134,27 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
             specs = json.loads(specs)
         except Exception:
             specs = {}
+    if not isinstance(specs, dict):
+        specs = {}
+
+    # اگر مشخصات در فیلدهای مستقیم کاتالوگ باشد
+    if not specs:
+        if p.get("assembly"): specs["کشور سازنده / مونتاژ"] = p["assembly"]
+        if p.get("resolution"): specs["کیفیت تصویر"] = p["resolution"]
+        if p.get("panel"): specs["نوع پنل"] = p["panel"]
+        if p.get("refresh_rate"): specs["نرخ نوسازی"] = p["refresh_rate"]
+        if p.get("os"): specs["سیستم عامل"] = p["os"]
+        if p.get("capacity_btu"): specs["ظرفیت"] = f"{p['capacity_btu']} BTU"
+        if p.get("capacity_kg"): specs["ظرفیت"] = f"{p['capacity_kg']} کیلوگرم"
+        if p.get("capacity_foot"): specs["ظرفیت"] = f"{p['capacity_foot']} فوت"
+        if p.get("baskets"): specs["تعداد سبد"] = p["baskets"]
+        if p.get("subcategory"): specs["دسته‌بندی"] = p["subcategory"]
+        if p.get("score"): specs["امتیاز کیفی"] = f"⭐️ {p['score']} از ۱۰"
+
+    # اضافه کردن مشخصات تولید شده توسط هوش مصنوعی
+    if p.get("ai_specs") and isinstance(p["ai_specs"], dict):
+        for k, v in p["ai_specs"].items():
+            specs[k] = v
 
     specs_lines = []
     if isinstance(specs, dict):

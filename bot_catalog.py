@@ -116,8 +116,12 @@ def get_product_card(prod: dict) -> str:
             lines.append(f"▫️ **دسته‌بندی:** {prod['subcategory']}")
         if prod.get("score"):
             lines.append(f"▫️ **امتیاز کیفی:** ⭐️ {prod['score']} از ۱۰")
-        if prod.get("more_details"):
-            lines.append(f"\n📝 **توضیحات:**\n{prod['more_details']}")
+        if prod.get("ai_specs") and isinstance(prod["ai_specs"], dict):
+            for k, v in prod["ai_specs"].items():
+                if k not in ["ضمانت اصالت", "گارانتی"]:
+                    lines.append(f"▫️ **{k}:** {v}")
+        elif prod.get("more_details"):
+            lines.append(f"\n📝 **مشخصات فنی:**\n{prod['more_details']}")
 
     # افزودن ضمانت اصالت و گارانتی به تمامی محصولات
     lines.append("▫️ **ضمانت اصالت:** ۱۰۰٪ اورجینال با تضمین کتبی")
