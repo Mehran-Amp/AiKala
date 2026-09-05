@@ -75,6 +75,116 @@ def get_gemini_api_key() -> str:
             logger.error(f"Error reading .env: {e}")
     return api_key
 
+def set_gemini_api_key(new_key: str) -> bool:
+    """تنظیم و ذخیره کلید جدید Gemini در متغیر محیط و فایل .env"""
+    key = str(new_key).strip()
+    if not key:
+        return False
+    os.environ["GEMINI_API_KEY"] = key
+    lines = []
+    found = False
+    if os.path.exists(".env"):
+        try:
+            with open(".env", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip().startswith("GEMINI_API_KEY="):
+                        lines.append(f"GEMINI_API_KEY={key}\n")
+                        found = True
+                    else:
+                        lines.append(line)
+        except Exception:
+            pass
+    if not found:
+        lines.append(f"GEMINI_API_KEY={key}\n")
+    try:
+        with open(".env", "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving to .env: {e}")
+        return False
+
+def extract_laptops_from_text(raw_text: str) -> List[Dict[str, Any]]:
+    """
+    استخراج سطرهای لپ‌تاپ از متن کپی‌شده از تلگرام یا جدول اکسل (بدون نیاز به هوش مصنوعی)
+    قوانین: حذف کامل شماره‌های تماس، همکار، تبلیغات و تشخیص برند و مدل و قیمت.
+    """
+    if not raw_text:
+        return []
+    lines = raw_text.strip().split("\n")
+    results = []
+    
+    brand_patterns = [
+        ("HP", r'\b(hp|اچ\s*پی)\b'),
+        ("ASUS", r'\b(asus|ایسوس)\b'),
+        ("LENOVO", r'\b(lenovo|لنوو)\b'),
+        ("DELL", r'\b(dell|دل)\b'),
+        ("APPLE", r'\b(apple|macbook|اپل|مک\s*بوک)\b'),
+        ("ACER", r'\b(acer|ایسر)\b'),
+        ("MSI", r'\b(msi|ام\s*اس\s*ای)\b'),
+        ("MICROSOFT", r'\b(surface|microsoft|سرفیس)\b'),
+    ]
+
+    for line in lines:
+        line_clean = line.strip()
+        if not line_clean or len(line_clean) < 10:
+            continue
+        # فیلتر کردن هدرها و ستون همکاری یا شماره تماس
+        if re.search(r'(همکار|همکاری|تلفن|تماس|۰۹\d{9}|09\d{9}|کانال|آدرس|مشخصات|قیمت\s*همکار)', line_clean):
+            continue
+        
+        # استخراج قیمت از انتهای خط یا بعد از ستون قیمت
+        # ارقام را پیدا می‌کنیم
+        price_matches = re.findall(r'(\d[\d\,\.]{3,}\d)', line_clean)
+        if not price_matches:
+            continue
+        
+        # آخرین عدد بزرگ معمولاً قیمت مصرف‌کننده است
+        price_str = price_matches[-1].replace(",", "").replace(".", "").replace("،", "")
+        try:
+            p_val = int(price_str)
+            # اگر به هزار تومان نوشته شده (مثلاً 248000 به جای 248000000 یا 35000 به جای 35000000)
+            if 10000 <= p_val <= 900000:
+                p_val = p_val * 1000
+        except Exception:
+            continue
+
+        # تشخیص برند
+        detected_brand = "متفرقه"
+        for b_name, b_regex in brand_patterns:
+            if re.search(b_regex, line_clean, re.IGNORECASE):
+                detected_brand = b_name
+                break
+        
+        # اگر برندی تشخیص داده نشد، سطر ممکن است لپ‌تاپ نباشد
+        if detected_brand == "متفرقه" and not re.search(r'\b(core|i[3579]|ryzen|ram|ssd|gb)\b', line_clean, re.IGNORECASE):
+            continue
+
+        # مدل را از متن تمیز استخراج می‌کنیم
+        parts = re.split(r'[\t\|\-\–]', line_clean)
+        model = parts[0].strip() if parts else line_clean[:40]
+        # حذف ارقام قیمت از مدل
+        model = re.sub(r'\d[\d\,\.]{3,}\d', '', model).strip()
+        if len(model) < 4:
+            model = f"لپ‌تاپ {detected_brand}"
+
+        results.append({
+            "code": f"L{len(results)+101}",
+            "brand": detected_brand,
+            "model": model,
+            "cpu": "مندرج در مدل",
+            "ram": "-",
+            "storage": "-",
+            "gpu": "-",
+            "display": "-",
+            "grade": "A++",
+            "price": str(p_val)
+        })
+
+    if results:
+        return clean_and_normalize_laptops(results)
+    return []
+
 def extract_laptops_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> List[Dict[str, Any]]:
     """
     ارسال تصویر به مدل بینایی ماشین Gemini Vision و بازگرداندن آرایه تمیز لپ‌تاپ‌ها.

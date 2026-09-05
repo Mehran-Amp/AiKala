@@ -50,6 +50,8 @@ from database import Database
 from search_engine import JSON_PRODUCTS, search_products, _normalize_digits, load_json_products
 from laptop_extractor import (
     extract_laptops_from_image,
+    extract_laptops_from_text,
+    set_gemini_api_key,
     merge_extracted_laptops,
     format_laptops_preview_for_admin,
     load_laptops_catalog
@@ -135,6 +137,37 @@ async def track_order_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     """انتقال مستقیم به سامانه تعاملی رهگیری سفارشات"""
     await show_order_tracking(update, context)
 
+async def setgemini_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تنظیم کلید Gemini API توسط ادمین برای استخراج تصاویر و جداول لپ‌تاپ"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "🔑 <b>راهنمای تنظیم کلید هوش مصنوعی Gemini:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "جهت فعال‌سازی یا به‌روزرسانی کلید استخراج تصویر، دستور را به این شکل ارسال فرمایید:\n"
+            "<code>/setgemini YOUR_GEMINI_API_KEY</code>\n\n"
+            "💡 <i>کلید اختصاصی را می‌توانید رایگان از <a href='https://aistudio.google.com/app/apikey'>Google AI Studio</a> دریافت نمایید.</i>",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+        return
+    key = args[0].strip()
+    if len(key) < 15:
+        await update.message.reply_text("❌ طول کلید وارد شده بسیار کوتاه است. لطفاً کلید کامل را ارسال فرمایید.")
+        return
+    ok = set_gemini_api_key(key)
+    if ok:
+        await update.message.reply_text(
+            "✅ <b>کلید هوش مصنوعی Gemini با موفقیت ذخیره شد!</b>\n"
+            "سیستم استخراج خودکار تصاویر جدول لپ‌تاپ با این کلید فعال گردید.",
+            parse_mode="HTML"
+        )
+    else:
+        await update.message.reply_text("❌ خطا در ذخیره‌سازی کلید در سرور.")
+
 # =====================================================================
 # 💬 هندلر پیام‌های متنی و جستجوی کالا
 # =====================================================================
@@ -164,10 +197,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not photo and not doc:
             if text_input in ["انصراف", "لغو", "بازگشت"]:
                 context.user_data.pop("awaiting_laptop_photo", None)
-                await update.message.reply_text("❌ عملیات استخراج تصویر لپ‌تاپ لغو شد.")
+                await update.message.reply_text("❌ عملیات استخراج لپ‌تاپ لغو شد.")
                 return
+
+            # بررسی اینکه آیا متن جدول اکسل یا پیام لیست ارسال شده است
+            text_extracted = extract_laptops_from_text(text_input) if len(text_input) > 15 else []
+            if text_extracted:
+                context.user_data["pending_extracted_laptops"] = text_extracted
+                context.user_data.pop("awaiting_laptop_photo", None)
+                preview_text = format_laptops_preview_for_admin(text_extracted, max_display=10)
+                confirm_kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(f"✅ تایید و ثبت {len(text_extracted)} لپ‌تاپ در فروشگاه", callback_data="adm_confirm_laptops"),
+                        InlineKeyboardButton("❌ انصراف", callback_data="adm_cancel_laptops")
+                    ],
+                    [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+                ])
+                await update.message.reply_text(
+                    f"📋 <b>استخراج موفقیت‌آمیز از متن ارسالی:</b>\n\n{preview_text}",
+                    reply_markup=confirm_kb,
+                    parse_mode="HTML"
+                )
+                return
+
             await update.message.reply_text(
-                "📸 لطفاً <b>عکس یا اسکرین‌شات جدول قیمت لپ‌تاپ</b> را ارسال فرمایید (یا برای انصراف کلمه <code>لغو</code> را بفرستید).",
+                "📸 لطفاً <b>عکس یا اسکرین‌شات جدول قیمت لپ‌تاپ</b> را ارسال فرمایید.\n"
+                "<i>(همچنین می‌توانید متن کپی‌شده از اکسل یا تلگرام را مستقیماً پیست نمایید)</i>\n"
+                "برای انصراف کلمه <code>لغو</code> را ارسال فرمایید.",
                 parse_mode="HTML"
             )
             return
@@ -210,8 +266,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as err:
             logger.error(f"Error extracting laptops from image: {err}")
             await status_msg.edit_text(
-                f"❌ <b>خطا در پردازش تصویر با هوش مصنوعی:</b>\n<code>{err}</code>\n\n"
-                "💡 <i>لطفاً از تنظیم صحیح کلید GEMINI_API_KEY در تنظیمات یا فایل .env اطمینان حاصل فرمایید.</i>",
+                f"❌ <b>خطا در استخراج با هوش مصنوعی:</b>\n<code>{err}</code>\n\n"
+                "💡 <b>راهکارهای سریع:</b>\n"
+                "۱. می‌توانید کلید فعال Gemini خود را با دستور زیر تنظیم فرمایید:\n"
+                "<code>/setgemini YOUR_API_KEY</code>\n\n"
+                "۲. یا متن جدول اکسل/پیام تلگرامی را کپی کرده و مستقیماً در چت ارسال فرمایید.",
                 parse_mode="HTML"
             )
             return
@@ -1010,6 +1069,64 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         await admin_panel_command(update, context)
 
+    elif data == "adm_upload_laptop_photo":
+        await query.answer()
+        context.user_data["awaiting_laptop_photo"] = True
+        context.user_data.pop("pending_extracted_laptops", None)
+        cancel_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 انصراف و بازگشت به پنل", callback_data="adm_cancel_laptops")]
+        ])
+        msg = (
+            "💻 <b>استخراج هوشمند لیست قیمت و موجودی لپ‌تاپ:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "لطفاً <b>عکس، اسکرین‌شات یا فایل تصویر جدول قیمت</b> لپ‌تاپ را ارسال فرمایید.\n\n"
+            "🤖 <b>فیلترهای خودکار هوش مصنوعی:</b>\n"
+            "✅ خواندن ستون «قیمت» و تبدیل دقیق به تومان\n"
+            "🚫 <b>حذف قطعی ستون همکاری</b> (قیمت همکار هرگز ثبت نمی‌شود)\n"
+            "🚫 <b>فیلتر کامل شماره تماس‌ها</b> (درویشی، رحمانی، خاکساران و...)\n"
+            "🚫 <b>حذف هدرها و نام‌های تبلیغاتی متفرقه</b>\n"
+            "🏷 تفکیک خودکار و ثبت زیرمجموعه منحصراً بر اساس برند (HP، ASUS، LENOVO و...)\n\n"
+            "👇 <i>هم‌اکنون عکس را در همین چت ارسال فرمایید:</i>"
+        )
+        try:
+            await query.edit_message_text(msg, reply_markup=cancel_kb, parse_mode="HTML")
+        except Exception:
+            await query.message.reply_text(msg, reply_markup=cancel_kb, parse_mode="HTML")
+
+    elif data == "adm_confirm_laptops":
+        await query.answer("در حال ذخیره و به‌روزرسانی محصولات...", show_alert=False)
+        extracted = context.user_data.pop("pending_extracted_laptops", None)
+        if not extracted:
+            await query.message.reply_text("⚠️ داده‌ای برای ثبت یافت نشد یا جلسه منقضی شده است.")
+            return
+
+        merge_res = merge_extracted_laptops(extracted)
+        # به‌روزرسانی آنی کش محصولات در حافظه بدون نیاز به ری‌استارت
+        load_json_products()
+
+        done_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📂 مشاهده دسته‌بندی لپ‌تاپ", callback_data="cat_m_laptop")],
+            [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+        ])
+        done_text = (
+            f"🎉 <b>لیست لپ‌تاپ‌ها با موفقیت ذخیره و به‌روزرسانی شد!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"➕ مدل‌های جدید اضافه شده: <b>{merge_res['added']} مدل</b>\n"
+            f"🔄 مدل‌های به‌روزرسانی شده: <b>{merge_res['updated']} مدل</b>\n"
+            f"💻 کل لپ‌تاپ‌های فعال در کاتالوگ: <b>{merge_res['total']} مدل</b>\n\n"
+            f"✨ کلیه محصولات بلافاصله در دسته‌بندی «💻 لپ‌تاپ» و زیرمجموعه برندها قرار گرفتند و با جستجوی مدل و مشخصات نیز قابل مشاهده و سفارش هستند."
+        )
+        try:
+            await query.edit_message_text(done_text, reply_markup=done_kb, parse_mode="HTML")
+        except Exception:
+            await query.message.reply_text(done_text, reply_markup=done_kb, parse_mode="HTML")
+
+    elif data == "adm_cancel_laptops":
+        await query.answer("عملیات لغو شد.")
+        context.user_data.pop("awaiting_laptop_photo", None)
+        context.user_data.pop("pending_extracted_laptops", None)
+        await admin_panel_command(update, context)
+
     elif data.startswith("req_img|"):
         pid = resolve_safe_cb(data)
         user = update.effective_user
@@ -1219,6 +1336,7 @@ def main():
     app.add_handler(CommandHandler("sync_photos", sync_photos_command))
     app.add_handler(CommandHandler("setphoto", setphoto_command))
     app.add_handler(CommandHandler("clearphotos", clearphotos_command))
+    app.add_handler(CommandHandler("setgemini", setgemini_command))
     app.add_handler(CommandHandler("admin", admin_panel_command))
 
     # شنونده کانال تصاویر
