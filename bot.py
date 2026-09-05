@@ -102,6 +102,8 @@ from admin_panel import (
     admin_clear_laptops_do,
     admin_sync_live_prices,
     admin_bank_settings,
+    admin_prompt_bank_edit,
+    handle_admin_bank_input,
     admin_catalog_report,
     admin_broadcast_ask,
     admin_broadcast_do,
@@ -200,6 +202,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if adm and context.user_data.get("awaiting_broadcast_msg"):
         handled = await handle_admin_broadcast_input(update, context)
+        if handled:
+            return
+
+    if adm and context.user_data.get("awaiting_bank_edit_field"):
+        handled = await handle_admin_bank_input(update, context)
         if handled:
             return
 
@@ -1117,6 +1124,18 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data == "adm_bank_settings":
         await admin_bank_settings(update, context)
+
+    elif data == "adm_edit_bank_card":
+        await admin_prompt_bank_edit(update, context, "card")
+
+    elif data == "adm_edit_bank_shaba":
+        await admin_prompt_bank_edit(update, context, "shaba")
+
+    elif data == "adm_edit_bank_holder":
+        await admin_prompt_bank_edit(update, context, "holder")
+
+    elif data == "adm_edit_bank_deposit":
+        await admin_prompt_bank_edit(update, context, "deposit")
 
     elif data == "adm_catalog_report":
         await admin_catalog_report(update, context)

@@ -92,8 +92,8 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         # ۲. کاتالوگ و قیمت‌ها
         [
-            InlineKeyboardButton("💻 استخراج قیمت و مشخصات لپ‌تاپ", callback_data="adm_laptop_hub"),
-            InlineKeyboardButton("🔄 بروزرسانی قیمت‌ها (ممتازکالا)", callback_data="adm_sync_live_prices")
+            InlineKeyboardButton("💻 لیست جدید لپتاپ", callback_data="adm_laptop_hub"),
+            InlineKeyboardButton("🔄 بروزرسانی دستی قیمتها", callback_data="adm_sync_live_prices")
         ],
         
         # ۳. پشتیبانی و پیام همگانی
@@ -314,10 +314,13 @@ async def admin_sync_live_prices(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(result_text, reply_markup=kb, parse_mode="HTML")
 
 async def admin_bank_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """نمایش مشخصات حساب بانکی، کارت، شبا و درصد بیعانه"""
+    """نمایش و مدیریت مشخصات حساب بانکی، کارت، شبا و درصد بیعانه"""
     user = update.effective_user
     if not is_admin(user.id):
         return
+
+    # پاکسازی حالت‌های انتظار ویرایش قبلی
+    context.user_data.pop("awaiting_bank_edit_field", None)
 
     card_num = getattr(config, "CARD_NUMBER", "6104-3386-4929-6106")
     card_holder = getattr(config, "CARD_HOLDER", "فروشگاه آاگ کالا مهران امین پور")
@@ -325,21 +328,26 @@ async def admin_bank_settings(update: Update, context: ContextTypes.DEFAULT_TYPE
     deposit_pct = getattr(config, "DEPOSIT_PERCENT", 8)
 
     text = (
-        f"💳 <b>تنظیمات حساب بانکی و بیعانه فروشگاه:</b>\n"
+        f"💳 <b>مدیریت حساب بانکی و بیعانه فروشگاه:</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"▫️ شماره کارت رسمی: <code>{card_num}</code>\n"
-        f"▫️ شماره شبا بانکی: {shaba_html}\n"
-        f"▫️ به نام دارنده حساب: <b>{card_holder}</b>\n"
-        f"▫️ درصد محاسبه بیعانه سفارش: <b>{deposit_pct}٪ کل مبلغ کالا</b>\n"
+        f"▫️ شماره کارت: <code>{card_num}</code>\n"
+        f"▫️ شماره شبا: {shaba_html}\n"
+        f"▫️ به نام: <b>{card_holder}</b>\n"
+        f"▫️ درصد بیعانه: <b>{deposit_pct}٪ کل مبلغ کالا</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📌 <b>نحوه کارکرد در سیستم:</b>\n"
-        f"• این اطلاعات در پیام صدور پیش‌فاکتور خودکار برای مشتری ارسال می‌شود.\n"
-        f"• خریدار با لمس شماره کارت یا شماره شبا، فقط ارقام آن را در حافظه کپی می‌کند.\n"
-        f"• در کادر مالی تصویر پیش‌فاکتور (Ultra HD PNG) نیز همین مشخصات درج می‌شود.\n\n"
-        f"🔧 <i>تنظیمات فوق از طریق متغیرهای سیستمی مدیریت می‌شوند.</i>"
+        f"📌 جهت تغییر هر کدام از موارد، روی دکمه مربوطه کلیک فرمایید:\n"
+        f"<i>(تغییرات به صورت آنی در پیش‌فاکتورها، محاسبات مالی و فاکتورهای رسمی ذخیره و اعمال می‌شود)</i>"
     )
 
     kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✏️ تغییر شماره کارت", callback_data="adm_edit_bank_card"),
+            InlineKeyboardButton("✏️ تغییر شماره شبا", callback_data="adm_edit_bank_shaba")
+        ],
+        [
+            InlineKeyboardButton("✏️ تغییر نام دارنده حساب", callback_data="adm_edit_bank_holder"),
+            InlineKeyboardButton("✏️ تغییر درصد بیعانه", callback_data="adm_edit_bank_deposit")
+        ],
         [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
     ])
 
@@ -351,6 +359,125 @@ async def admin_bank_settings(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
     else:
         await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+async def admin_prompt_bank_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, field_key: str):
+    """درخواست ورودی متنی از ادمین برای ویرایش یک مشخصه بانکی"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    context.user_data["awaiting_bank_edit_field"] = field_key
+
+    prompts = {
+        "card": (
+            "💳 <b>تغییر شماره کارت واریز بیعانه:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"شماره کارت فعلی: <code>{getattr(config, 'CARD_NUMBER', '')}</code>\n\n"
+            "لطفاً شماره کارت جدید ۱۶ رقمی را در همین چت ارسال فرمایید:\n"
+            "<i>(می‌توانید به صورت پیوسته یا خط تیره ۴ رقم ۴ رقم بفرستید)</i>"
+        ),
+        "shaba": (
+            "🏦 <b>تغییر شماره شبا بانکی:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"شماره شبا فعلی: {getattr(config, 'SHABA_HTML', '')}\n\n"
+            "لطفاً شماره شبا ۲۴ رقمی جدید را ارسال فرمایید:\n"
+            "<i>(نیازی به نوشتن کلمه IR نیست، سیستم خودکار تنظیم می‌کند)</i>"
+        ),
+        "holder": (
+            "👤 <b>تغییر نام دارنده حساب / کارت:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"نام فعلی: <b>{getattr(config, 'CARD_HOLDER', '')}</b>\n\n"
+            "لطفاً نام و نام خانوادگی کامل یا نام تجاری حساب را ارسال فرمایید:"
+        ),
+        "deposit": (
+            "📊 <b>تغییر درصد محاسبه بیعانه سفارشات:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"درصد فعلی: <b>{getattr(config, 'DEPOSIT_PERCENT', 8)}٪</b>\n\n"
+            "لطفاً درصد جدید را به صورت یک عدد بین <b>۱ تا ۱۰۰</b> ارسال فرمایید:\n"
+            "<i>(مثال: عدد 10 برای ۱۰٪، یا 5 برای ۵٪)</i>"
+        )
+    }
+
+    prompt_text = prompts.get(field_key, "لطفاً مقدار جدید را ارسال فرمایید:")
+    prompt_text += "\n\n❌ <i>جهت انصراف، کلمه <code>لغو</code> را ارسال نمایید.</i>"
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 انصراف و بازگشت", callback_data="adm_bank_settings")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(prompt_text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(prompt_text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(prompt_text, reply_markup=kb, parse_mode="HTML")
+
+async def handle_admin_bank_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """دریافت مقدار جدید ارسالی ادمین برای فیلدهای بانکی و ذخیره قطعی آن"""
+    field = context.user_data.get("awaiting_bank_edit_field")
+    if not field:
+        return False
+
+    user = update.effective_user
+    if not is_admin(user.id):
+        return False
+
+    val = update.message.text.strip() if update.message.text else ""
+    if val in ["لغو", "/cancel", "انصراف", "بازگشت"]:
+        context.user_data.pop("awaiting_bank_edit_field", None)
+        await update.message.reply_text("❌ ویرایش مشخصات بانکی لغو گردید.")
+        await admin_bank_settings(update, context)
+        return True
+
+    # نرمال‌سازی اعداد فارسی
+    from search_engine import _normalize_digits
+    val_norm = _normalize_digits(val)
+
+    if field == "card":
+        digits = "".join(re.findall(r'\d+', val_norm))
+        if len(digits) != 16:
+            await update.message.reply_text("⚠️ شماره کارت باید دقیقاً ۱۶ رقم باشد. لطفاً مجدداً شماره معتبر بفرستید یا کلمه «لغو» را ارسال فرمایید:")
+            return True
+        # قالب‌بندی با خط تیره
+        formatted_card = f"{digits[0:4]}-{digits[4:8]}-{digits[8:12]}-{digits[12:16]}"
+        config.update_bank_settings(card_number=formatted_card)
+        success_msg = f"✅ شماره کارت با موفقیت به <code>{formatted_card}</code> تغییر یافت."
+
+    elif field == "shaba":
+        digits = "".join(re.findall(r'\d+', val_norm))
+        if len(digits) != 24:
+            await update.message.reply_text("⚠️ شماره شبا باید دقیقاً ۲۴ رقم (بدون IR) باشد. لطفاً مجدداً با دقت بفرستید یا کلمه «لغو» را ارسال فرمایید:")
+            return True
+        new_shaba = f"IR {digits}"
+        config.update_bank_settings(card_shaba=new_shaba)
+        success_msg = f"✅ شماره شبا با موفقیت به IR <code>{digits}</code> تغییر یافت."
+
+    elif field == "holder":
+        if len(val) < 3:
+            await update.message.reply_text("⚠️ نام وارد شده بیش از حد کوتاه است. لطفاً نام کامل دارنده حساب را وارد نمایید:")
+            return True
+        config.update_bank_settings(card_holder=val)
+        success_msg = f"✅ نام دارنده حساب با موفقیت به <b>{val}</b> تغییر یافت."
+
+    elif field == "deposit":
+        digits = "".join(re.findall(r'\d+', val_norm))
+        if not digits or int(digits) < 1 or int(digits) > 100:
+            await update.message.reply_text("⚠️ درصد بیعانه باید عددی بین ۱ تا ۱۰۰ باشد (مثلاً 8 یا 10). لطفاً مجدداً ارسال فرمایید:")
+            return True
+        pct = int(digits)
+        config.update_bank_settings(deposit_percent=pct)
+        success_msg = f"✅ درصد محاسبه بیعانه با موفقیت به <b>{pct}٪</b> کل فاکتور تغییر یافت."
+
+    else:
+        context.user_data.pop("awaiting_bank_edit_field", None)
+        return False
+
+    context.user_data.pop("awaiting_bank_edit_field", None)
+    await update.message.reply_text(success_msg, parse_mode="HTML")
+    await admin_bank_settings(update, context)
+    return True
 
 async def admin_catalog_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """گزارش تفکیک‌شده کاتالوگ محصولات"""

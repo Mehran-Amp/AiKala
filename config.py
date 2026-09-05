@@ -57,10 +57,31 @@ SHOP_PHONE: str = os.getenv("SHOP_PHONE", "۰۹۱۹۵۸۵۹۴۳۴")
 SHOP_ADDRESS: str = os.getenv("SHOP_ADDRESS", "بانه، بازارچه اصلی، فروشگاه آی کالا")
 LICENSE_NO: str = os.getenv("LICENSE_NO", "125366980")
 
-DEPOSIT_PERCENT: int = 8
-DEPOSIT_CARD_NUMBER: str = os.getenv("DEPOSIT_CARD_NUMBER", "6104-3386-4929-6106")
-DEPOSIT_CARD_NAME: str = os.getenv("DEPOSIT_CARD_NAME", "فروشگاه آاگ کالا مهران امین پور")
-DEPOSIT_CARD_SHABA: str = os.getenv("DEPOSIT_CARD_SHABA", "IR 620120020000005786685564")
+import json
+BANK_SETTINGS_FILE = "bank_settings.json"
+
+def _load_bank_settings():
+    default_cfg = {
+        "card_number": os.getenv("DEPOSIT_CARD_NUMBER", "6104-3386-4929-6106"),
+        "card_holder": os.getenv("DEPOSIT_CARD_NAME", "فروشگاه آاگ کالا مهران امین پور"),
+        "card_shaba": os.getenv("DEPOSIT_CARD_SHABA", "IR 620120020000005786685564"),
+        "deposit_percent": int(os.getenv("DEPOSIT_PERCENT", "8"))
+    }
+    if os.path.exists(BANK_SETTINGS_FILE):
+        try:
+            with open(BANK_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                default_cfg.update({k: v for k, v in data.items() if v is not None})
+        except Exception:
+            pass
+    return default_cfg
+
+_bank_cfg = _load_bank_settings()
+
+DEPOSIT_PERCENT: int = int(_bank_cfg.get("deposit_percent", 8))
+DEPOSIT_CARD_NUMBER: str = str(_bank_cfg.get("card_number", "6104-3386-4929-6106"))
+DEPOSIT_CARD_NAME: str = str(_bank_cfg.get("card_holder", "فروشگاه آاگ کالا مهران امین پور"))
+DEPOSIT_CARD_SHABA: str = str(_bank_cfg.get("card_shaba", "IR 620120020000005786685564"))
 
 # متغیرهای معادل جهت سازگاری کامل با تمامی توابع bot.py
 CARD_NUMBER: str = DEPOSIT_CARD_NUMBER
@@ -82,6 +103,66 @@ def get_shaba_html(shaba_str: str = None) -> str:
 
 SHABA_DIGITS: str = get_shaba_digits(DEPOSIT_CARD_SHABA)
 SHABA_HTML: str = get_shaba_html(DEPOSIT_CARD_SHABA)
+
+def update_bank_settings(
+    card_number: str = None,
+    card_holder: str = None,
+    card_shaba: str = None,
+    deposit_percent: int = None
+) -> dict:
+    """بروزرسانی مشخصات بانکی و درصد بیعانه و ذخیره پایدار در دیسک"""
+    global DEPOSIT_CARD_NUMBER, DEPOSIT_CARD_NAME, DEPOSIT_CARD_SHABA, DEPOSIT_PERCENT
+    global CARD_NUMBER, CARD_HOLDER, CARD_SHABA, SHABA_DIGITS, SHABA_HTML
+
+    current = _load_bank_settings()
+    if card_number is not None:
+        current["card_number"] = str(card_number).strip()
+    if card_holder is not None:
+        current["card_holder"] = str(card_holder).strip()
+    if card_shaba is not None:
+        raw_s = str(card_shaba).strip()
+        if not raw_s.upper().startswith("IR"):
+            raw_s = f"IR {raw_s}"
+        current["card_shaba"] = raw_s
+    if deposit_percent is not None:
+        current["deposit_percent"] = max(1, min(100, int(deposit_percent)))
+
+    try:
+        with open(BANK_SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(current, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("خطا در ذخیره مشخصات بانکی:", e)
+
+    DEPOSIT_PERCENT = int(current.get("deposit_percent", 8))
+    DEPOSIT_CARD_NUMBER = str(current.get("card_number", "6104-3386-4929-6106"))
+    DEPOSIT_CARD_NAME = str(current.get("card_holder", "فروشگاه آاگ کالا مهران امین پور"))
+    DEPOSIT_CARD_SHABA = str(current.get("card_shaba", "IR 620120020000005786685564"))
+
+    CARD_NUMBER = DEPOSIT_CARD_NUMBER
+    CARD_HOLDER = DEPOSIT_CARD_NAME
+    CARD_SHABA = DEPOSIT_CARD_SHABA
+    SHABA_DIGITS = get_shaba_digits(DEPOSIT_CARD_SHABA)
+    SHABA_HTML = get_shaba_html(DEPOSIT_CARD_SHABA)
+
+    # همگام‌سازی با ماژول‌های دیگر در صورت بارگذاری قبلی
+    try:
+        import order_flow
+        order_flow.CARD_NUMBER = CARD_NUMBER
+        order_flow.CARD_HOLDER = CARD_HOLDER
+        order_flow.CARD_SHABA = CARD_SHABA
+        order_flow.SHABA_HTML = SHABA_HTML
+    except Exception:
+        pass
+
+    try:
+        import invoice_service
+        invoice_service.CARD_NUMBER = CARD_NUMBER
+        invoice_service.CARD_HOLDER = CARD_HOLDER
+        invoice_service.CARD_SHABA = CARD_SHABA
+    except Exception:
+        pass
+
+    return current
 DEPOSIT_AMOUNT: str = "۲,۰۰۰,۰۰۰"
 PRICE_NOTE: str = "⚠️ به علت نوسانات لحظه‌ای ارز، استعلام قیمت قطعی قبل از بارگیری الزامی است."
 

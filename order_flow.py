@@ -194,9 +194,10 @@ async def order_postal_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if digits:
             try:
                 total_price = int("".join(digits))
-                deposit = int(round((total_price * 0.08) / 10000)) * 10000
+                dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
+                deposit = int(round((total_price * (dep_pct / 100.0)) / 10000)) * 10000
                 if deposit == 0:
-                    deposit = int(round((total_price * 0.08) / 1000)) * 1000
+                    deposit = int(round((total_price * (dep_pct / 100.0)) / 1000)) * 1000
             except Exception:
                 pass
 
@@ -255,7 +256,7 @@ async def order_postal_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"⏳ <b>وضعیت سند: پیش‌فاکتور رسمی (در انتظار واریز بیعانه)</b>\n"
         f"💰 <b>قیمت قطعی روز با احتساب هزینه ارسال درب منزل:</b> <b>{f_total_price} تومان</b>\n"
-        f"💳 <b>مبلغ بیعانه پیش‌پرداخت (۸٪):</b> <b>{f_deposit} تومان</b>\n"
+        f"💳 <b>مبلغ بیعانه پیش‌پرداخت ({getattr(config, 'DEPOSIT_PERCENT', 8)}٪):</b> <b>{f_deposit} تومان</b>\n"
         f"▫️ <b>مانده تسویه پس از تحویل و تست سلامت:</b> <b>{f_remaining} تومان</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"▫️ شماره کارت رسمی: <code>{CARD_NUMBER}</code>\n"
