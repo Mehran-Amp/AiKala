@@ -20,11 +20,18 @@ try:
     )
     from telegram.ext import ContextTypes
 except ImportError:
-    InlineKeyboardButton = object
-    InlineKeyboardMarkup = object
-    ReplyKeyboardMarkup = object
-    KeyboardButton = object
-    Update = object
+    class _MockTelegramObj:
+        def __init__(self, *args, **kwargs):
+            self.text = args[0] if args else kwargs.get("text", "")
+            self.callback_data = kwargs.get("callback_data", "")
+            self.args = args
+            self.kwargs = kwargs
+            self.inline_keyboard = args[0] if (args and isinstance(args[0], list)) else kwargs.get("inline_keyboard", [])
+    InlineKeyboardButton = _MockTelegramObj
+    InlineKeyboardMarkup = _MockTelegramObj
+    ReplyKeyboardMarkup = _MockTelegramObj
+    KeyboardButton = _MockTelegramObj
+    Update = _MockTelegramObj
     class ContextTypes:
         DEFAULT_TYPE = Any
 
@@ -165,12 +172,28 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
     specs_lines = []
     if isinstance(specs, dict):
         for k, v in specs.items():
-            if v and k not in ["ضمانت اصالت", "گارانتی"]:
+            if v and k not in ["ضمانت اصالت", "گارانتی", "گارانتی و مهلت تست", "مهلت تست و تعویض"]:
                 specs_lines.append(f"▫️ <b>{k}:</b> {v}")
 
-    # افزودن ضمانت اصالت و گارانتی به تمامی محصولات
-    specs_lines.append("▫️ <b>ضمانت اصالت:</b> ۱۰۰٪ اورجینال با تضمین کتبی")
-    specs_lines.append("▫️ <b>گارانتی:</b> ۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش")
+    # تشخیص هوشمند محصولات لپ‌تاپ جهت ارائه ضمانت متناسب
+    cat_check = str(category or "").strip().lower()
+    cat_key = str(p.get("category_key") or "").strip().lower()
+    pid_str = str(p.get("product_id") or p.get("id") or "").upper()
+    is_laptop = (
+        cat_key == "laptop"
+        or any(term in cat_check for term in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"])
+        or pid_str.startswith("LAP")
+        or (isinstance(specs, dict) and any(k in specs for k in ["پردازنده (CPU)", "کارت گرافیک (GPU)", "گرید و تمیزی"]))
+        or any(term in str(name).lower() for term in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"])
+    )
+
+    if is_laptop:
+        # برای محصولات لپتاپ: یک هفته ضمانت تست و تعویض
+        specs_lines.append("▫️ <b>گارانتی و مهلت تست:</b> یک هفته ضمانت تست و تعویض")
+    else:
+        # سایر محصولات (لوازم خانگی شرکتی)
+        specs_lines.append("▫️ <b>ضمانت اصالت:</b> ۱۰۰٪ اورجینال با تضمین کتبی")
+        specs_lines.append("▫️ <b>گارانتی:</b> ۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش")
 
     specs_str = "\n".join(specs_lines)
 
@@ -211,8 +234,13 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
 # ─── کیبورد زیر هر کارت کالا ───
 
 def product_inline_keyboard(pid: str, context: Optional[ContextTypes.DEFAULT_TYPE] = None, show_photo_button: bool = True) -> InlineKeyboardMarkup:
-    """دکمه‌های اقدام زیر کارت کالا: استعلام قیمت و کرایه، تصاویر محصول (در صورت نبود تصویر)، تماس با پشتیبانی"""
+    """دکمه‌های اقدام زیر کارت کالا: استعلام قیمت و کرایه، تصاویر محصول (در صورت نبود تصویر و برای غیر لپ‌تاپ)، تماس با پشتیبانی"""
     pid_str = str(pid if pid is not None else "").strip()
+
+    # محصولات لپ‌تاپ فاقد تصویر آلبومی هستند؛ دکمه تصاویر برای لپ‌تاپ نمایش داده نمی‌شود
+    if pid_str.upper().startswith("LAP"):
+        show_photo_button = False
+
     action_row = []
     if show_photo_button:
         action_row.append(InlineKeyboardButton("📸 تصاویر محصول", callback_data=make_safe_cb("req_img", pid_str)))

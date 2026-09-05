@@ -14,8 +14,7 @@ from typing import Dict, List, Optional, Tuple, Any
 try:
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 except ImportError:
-    InlineKeyboardButton = None
-    InlineKeyboardMarkup = None
+    from keyboards import InlineKeyboardButton, InlineKeyboardMarkup
 
 from keyboards import make_safe_cb, resolve_safe_cb
 
@@ -140,9 +139,21 @@ def get_product_card(prod: dict) -> str:
         if specs.get("گرید و تمیزی"):
             lines.append(f"▫️ **گرید سلامت دستگاه:** ⭐️ {specs['گرید و تمیزی']}")
 
-    # افزودن ضمانت اصالت و گارانتی به تمامی محصولات
-    lines.append("▫️ **ضمانت اصالت:** ۱۰۰٪ اورجینال با تضمین کتبی")
-    lines.append("▫️ **گارانتی:** ۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش")
+    # بررسی آیا محصول لپ‌تاپ است جهت ارائه گارانتی متناسب
+    is_laptop = (
+        cat == "laptop"
+        or prod.get("category") in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"]
+        or prod.get("category_name") in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"]
+        or str(prod.get("id") or prod.get("product_id") or "").upper().startswith("LAP")
+        or any(w in str(prod.get("name") or prod.get("title") or "").lower() for w in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"])
+    )
+
+    if is_laptop:
+        lines.append("▫️ **گارانتی و مهلت تست:** یک هفته ضمانت تست و تعویض")
+    else:
+        # افزودن ضمانت اصالت و گارانتی به سایر محصولات (لوازم خانگی شرکتی)
+        lines.append("▫️ **ضمانت اصالت:** ۱۰۰٪ اورجینال با تضمین کتبی")
+        lines.append("▫️ **گارانتی:** ۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش")
 
     return "\n".join(lines)
 
@@ -259,7 +270,7 @@ def get_category_sub_markup(cat_key: str) -> Tuple[str, Any]:
         if row:
             buttons.append(row)
         buttons.append([
-            InlineKeyboardButton("📋 مشاهده همه مدل‌های لپ‌تاپ", callback_data=make_safe_cb("cat_all", "laptop")),
+            InlineKeyboardButton("📥 دانلود لیست موجودی", callback_data=make_safe_cb("cat_pdf", "laptop")),
             InlineKeyboardButton("🔙 بازگشت به دسته‌ها", callback_data="cat_back")
         ])
         all_laptops_count = sum(len(pids) for pids in brands_dict.values() if isinstance(pids, list))

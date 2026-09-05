@@ -431,10 +431,21 @@ def load_json_products(file_path: Optional[str] = None):
                     if p.get("score"): specs_dict["امتیاز کیفی"] = f"⭐️ {p['score']} از ۱۰"
                     if p.get("ai_specs") and isinstance(p["ai_specs"], dict):
                         for k, v in p["ai_specs"].items():
-                            if k not in ["ضمانت اصالت", "گارانتی"]:
+                            if k not in ["ضمانت اصالت", "گارانتی", "گارانتی و مهلت تست"]:
                                 specs_dict[k] = v
-                    specs_dict["ضمانت اصالت"] = "۱۰۰٪ اورجینال با تضمین کتبی"
-                    specs_dict["گارانتی"] = "۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش"
+
+                    is_lp = (
+                        p.get("category_key") == "laptop"
+                        or p.get("category") in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"]
+                        or p.get("category_name") in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"]
+                        or str(p.get("product_id") or "").upper().startswith("LAP")
+                        or any(w in str(p.get("name") or "").lower() for w in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"])
+                    )
+                    if is_lp:
+                        specs_dict["گارانتی و مهلت تست"] = "یک هفته ضمانت تست و تعویض"
+                    else:
+                        specs_dict["ضمانت اصالت"] = "۱۰۰٪ اورجینال با تضمین کتبی"
+                        specs_dict["گارانتی"] = "۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش"
 
                     if specs_dict:
                         p["specs"] = specs_dict
@@ -479,6 +490,10 @@ def load_json_products(file_path: Optional[str] = None):
                             lp["category"] = "لپ‌تاپ"
                         if "product_id" not in lp:
                             lp["product_id"] = lid
+                        if "specs" in lp and isinstance(lp["specs"], dict):
+                            lp["specs"].pop("ضمانت اصالت", None)
+                            lp["specs"].pop("گارانتی", None)
+                            lp["specs"]["گارانتی و مهلت تست"] = "یک هفته ضمانت تست و تعویض"
                         if lid not in seen_keys:
                             seen_keys.add(lid)
                             JSON_PRODUCTS.append(lp)

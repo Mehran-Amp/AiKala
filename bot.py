@@ -698,6 +698,44 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.reply_text("❌ کالایی در این دسته یافت نشد.")
         return
 
+    elif data.startswith("cat_pdf|"):
+        await query.answer("📄 در حال آماده‌سازی فایل PDF لیست قیمت...")
+        cat_key = resolve_safe_cb(data)
+        chat_id = query.message.chat_id
+
+        if cat_key == "laptop":
+            try:
+                from laptop_pdf_service import generate_laptops_price_list_pdf, load_all_laptops
+                await context.bot.send_chat_action(chat_id=chat_id, action="upload_document")
+
+                pdf_filename = "AiKala_Laptops_PriceList.pdf"
+                pdf_path = generate_laptops_price_list_pdf(pdf_filename)
+                laptops = load_all_laptops()
+                laptops_count = len(laptops)
+
+                caption_text = (
+                    "📄 <b>لیست قیمت ربات تلگرامی AiKala_bot</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"💻 دسته‌بندی: <b>لپ‌تاپ‌های موجود ({laptops_count} مدل)</b>\n"
+                    "🛡 <b>گارانتی و مهلت تست:</b> یک هفته ضمانت تست و تعویض\n"
+                    "▫️ کلیه قیمت‌ها و مشخصات فنی بر اساس آخرین موجودی انبار درج شده است.\n\n"
+                    "📞 <b>مشاوره و خرید:</b> ۰۹۱۹۵۸۵۹۴۳۴\n"
+                    "🤖 ربات فروشگاه: @AiKala_bot"
+                )
+
+                with open(pdf_path, "rb") as doc_file:
+                    await context.bot.send_document(
+                        chat_id=chat_id,
+                        document=doc_file,
+                        filename="AiKala_Laptops_PriceList.pdf",
+                        caption=caption_text,
+                        parse_mode="HTML"
+                    )
+            except Exception as e:
+                logger.error(f"Error generating/sending laptop price list PDF: {e}")
+                await query.message.reply_text("⚠️ متأسفانه در آماده‌سازی فایل PDF خطایی رخ داد. لطفاً با پشتیبانی تماس حاصل فرمایید.")
+        return
+
     elif data.startswith("sel|"):
         await query.answer()
         pid = resolve_safe_cb(data)
@@ -1307,6 +1345,18 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not prod:
             prod = await db.get_product_by_id(pid)
         pname = prod.get("name", "این محصول") if prod else "این محصول"
+
+        # بررسی آیا محصول از دسته لپ‌تاپ است (چون عکس ندارند)
+        is_laptop = (
+            (prod and prod.get("category_key") == "laptop")
+            or (prod and prod.get("category") in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"])
+            or (prod and prod.get("category_name") in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"])
+            or str(pid).upper().startswith("LAP")
+            or any(w in str(pname).lower() for w in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"])
+        )
+        if is_laptop:
+            await query.answer("💡 محصولات دسته‌بندی لپ‌تاپ فاقد تصویر آلبومی هستند و مشخصات فنی آن‌ها در کارت کالا درج شده است.", show_alert=True)
+            return
 
         # ۱. بررسی هوشمند تصاویر تایید شده محصول یا مدل و سری مشابه
         matched_pid, photo_data, match_type = find_matching_verified_photos(prod or pid)

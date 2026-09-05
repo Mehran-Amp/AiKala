@@ -709,6 +709,7 @@ def clean_and_normalize_laptops(items: List[Dict[str, Any]]) -> List[Dict[str, A
         if display: specs["صفحه نمایش"] = display
         if grade: specs["گرید و تمیزی"] = grade
         if code: specs["کد مدل"] = code
+        specs["گارانتی و مهلت تست"] = "یک هفته ضمانت تست و تعویض"
         
         entry = {
             "id": product_id,

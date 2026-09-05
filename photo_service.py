@@ -1029,8 +1029,17 @@ async def send_product_card_and_photos(chat_id: int, product: dict, context: Con
             matched_note=matched_note
         )
 
-    # اگر عکس ارسال شده باشد، دکمه «تصاویر محصول» دیگر نیاز نیست
-    show_photo_btn = not photos_sent
+    # بررسی آیا محصول از دسته لپ‌تاپ است (چون عکس ندارند نباید دکمه تصاویر نمایش داده شود)
+    is_laptop = (
+        product.get("category_key") == "laptop"
+        or product.get("category") in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"]
+        or product.get("category_name") in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"]
+        or str(pid).upper().startswith("LAP")
+        or any(w in str(p_name).lower() for w in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"])
+    )
+
+    # اگر عکس ارسال شده باشد یا کالا لپ‌تاپ باشد، دکمه «تصاویر محصول» نمایش داده نمی‌شود
+    show_photo_btn = (not photos_sent) and (not is_laptop)
 
     msg = build_boxed_product_message(product)
     kb = product_inline_keyboard(pid, context, show_photo_button=show_photo_btn)
