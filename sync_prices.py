@@ -11,10 +11,77 @@ import json
 import os
 import sqlite3
 import time
+import datetime
 
 LIVE_JSON_URL = "https://momtazkalla.com/wp-content/uploads/procache-live/live-data.json"
 CATALOG_FILE = "catalog_products.json"
 DB_FILE = "bot_data.db"
+SYNC_INFO_FILE = "price_sync_info.json"
+
+def gregorian_to_jalali(gy, gm, gd):
+    """تبدیل دقیق میلادی به هجری شمسی بدون نیاز به کتابخانه‌های جانبی"""
+    g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    gy2 = gy if gm > 2 else gy - 1
+    days = 355666 + (365 * gy) + ((gy2 + 3) // 4) - ((gy2 + 99) // 100) + ((gy2 + 399) // 400) + gd + g_d_m[gm - 1]
+    jy = -1595 + (33 * (days // 12053))
+    days %= 12053
+    jy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365
+        days = (days - 1) % 365
+    if days < 186:
+        jm = 1 + (days // 31)
+        jd = 1 + (days % 31)
+    else:
+        jm = 7 + ((days - 186) // 30)
+        jd = 1 + ((days - 186) % 30)
+    return jy, jm, jd
+
+def get_persian_date_str(dt: datetime.datetime = None) -> str:
+    if dt is None:
+        dt = datetime.datetime.now()
+    jy, jm, jd = gregorian_to_jalali(dt.year, dt.month, dt.day)
+    return f"{jy:04d}/{jm:02d}/{jd:02d} ساعت {dt.strftime('%H:%M')}"
+
+def get_last_price_sync_str() -> str:
+    """دریافت تاریخ و ساعت آخرین بروزرسانی لیست قیمت محصولات ممتاز کالا"""
+    if os.path.exists(SYNC_INFO_FILE):
+        try:
+            with open(SYNC_INFO_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if data.get("persian_datetime"):
+                    return data["persian_datetime"]
+        except Exception:
+            pass
+
+    # در صورت عدم وجود فایل رکورد، بررسی تاریخ تغییر فایل‌های اصلی کاتالوگ
+    target_files = [CATALOG_FILE, "momtazkalla_all_products.json"]
+    for tf in target_files:
+        if os.path.exists(tf):
+            try:
+                mtime = os.path.getmtime(tf)
+                dt = datetime.datetime.fromtimestamp(mtime)
+                return get_persian_date_str(dt)
+            except Exception:
+                pass
+
+    return get_persian_date_str()
+
+def save_sync_info(updated_count: int = 0, total_items: int = 0):
+    try:
+        now_dt = datetime.datetime.now()
+        data = {
+            "timestamp": int(now_dt.timestamp()),
+            "persian_datetime": get_persian_date_str(now_dt),
+            "updated_count": updated_count,
+            "total_items": total_items,
+            "source": "ممتاز کالا (زنده)"
+        }
+        with open(SYNC_INFO_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("خطا در ذخیره رکورد زمان بروزرسانی:", e)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -99,6 +166,7 @@ def update_live_prices():
     except Exception as e:
         print("اطلاع دیتابیس:", e)
 
+    save_sync_info(updated_count=updated_count, total_items=len(items))
     return True
 
 if __name__ == "__main__":

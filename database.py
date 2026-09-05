@@ -742,6 +742,9 @@ class Database:
             cursor = await db.execute("SELECT COUNT(*) FROM orders")
             stats["total_orders"] = (await cursor.fetchone())[0]
 
+            cursor = await db.execute("SELECT COUNT(*) FROM orders WHERE status = 'Receipt_Uploaded'")
+            stats["pending_receipts"] = (await cursor.fetchone())[0]
+
             cursor = await db.execute("SELECT COUNT(*) FROM user_requests WHERE status = 'Pending'")
             stats["pending_requests"] = (await cursor.fetchone())[0]
 
@@ -752,6 +755,22 @@ class Database:
             cursor = await db.execute("SELECT COUNT(*) FROM orders WHERE DATE(created_at) = ?", (today,))
             stats["today_orders"] = (await cursor.fetchone())[0]
             return stats
+
+    async def get_all_active_user_ids(self) -> List[int]:
+        """دریافت شناسه عددی تمامی کاربرانی که تا کنون با ربات تعامل داشته‌اند"""
+        async with aiosqlite.connect(self.db_path) as db:
+            query = """
+                SELECT DISTINCT user_id FROM (
+                    SELECT user_id FROM user_last_view
+                    UNION
+                    SELECT user_id FROM orders
+                    UNION
+                    SELECT user_id FROM user_requests
+                ) WHERE user_id IS NOT NULL AND user_id > 0
+            """
+            cursor = await db.execute(query)
+            rows = await cursor.fetchall()
+            return [int(r[0]) for r in rows if r[0]]
 
     # ─── متدهای مدیریت کارشناسان پشتیبانی و مشاوره ───
 

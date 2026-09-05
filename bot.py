@@ -96,6 +96,16 @@ from order_flow import (
 )
 from admin_panel import (
     admin_panel_command,
+    admin_laptop_hub,
+    admin_text_laptop_prompt,
+    admin_clear_laptops_ask,
+    admin_clear_laptops_do,
+    admin_sync_live_prices,
+    admin_bank_settings,
+    admin_catalog_report,
+    admin_broadcast_ask,
+    admin_broadcast_do,
+    handle_admin_broadcast_input,
     sync_photos_command,
     setphoto_command,
     clearphotos_command,
@@ -185,6 +195,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if adm and context.user_data.get("awaiting_support_agent_step"):
         handled = await handle_admin_support_agent_input(update, context)
+        if handled:
+            return
+
+    if adm and context.user_data.get("awaiting_broadcast_msg"):
+        handled = await handle_admin_broadcast_input(update, context)
         if handled:
             return
 
@@ -1084,6 +1099,33 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "adm_back_panel":
         await query.answer()
         await admin_panel_command(update, context)
+
+    elif data == "adm_laptop_hub":
+        await admin_laptop_hub(update, context)
+
+    elif data == "adm_text_laptop_prompt":
+        await admin_text_laptop_prompt(update, context)
+
+    elif data == "adm_clear_laptops_ask":
+        await admin_clear_laptops_ask(update, context)
+
+    elif data == "adm_clear_laptops_do":
+        await admin_clear_laptops_do(update, context)
+
+    elif data == "adm_sync_live_prices":
+        await admin_sync_live_prices(update, context)
+
+    elif data == "adm_bank_settings":
+        await admin_bank_settings(update, context)
+
+    elif data == "adm_catalog_report":
+        await admin_catalog_report(update, context)
+
+    elif data == "adm_broadcast_ask":
+        await admin_broadcast_ask(update, context)
+
+    elif data == "adm_broadcast_do":
+        await admin_broadcast_do(update, context)
 
     elif data == "adm_upload_laptop_photo":
         await query.answer()

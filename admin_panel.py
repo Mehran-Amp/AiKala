@@ -25,6 +25,7 @@ PHOTOS_CHANNEL = getattr(config, "PHOTOS_CHANNEL", getattr(config, "PHOTO_CHANNE
 
 from database import Database
 from keyboards import is_admin, make_safe_cb, resolve_safe_cb
+from sync_prices import get_last_price_sync_str, update_live_prices
 from photo_service import (
     VERIFIED_PRODUCT_PHOTOS,
     PENDING_IMAGE_REQUESTS,
@@ -48,33 +49,69 @@ db = Database()
 # ─── دستورات پنل مدیریت ───
 
 async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """داشبورد اصلی و بهینه‌سازی‌شده مدیریت فروشگاه هوشمند آاگ کالا"""
     user = update.effective_user
     if not is_admin(user.id):
         return
 
+    # پاکسازی وضعیت‌های موقت احتمالی ادمین
+    context.user_data.pop("awaiting_broadcast_msg", None)
+
     stats = await db.get_stats()
+    total_prods = stats.get('total_products', 0)
+    try:
+        from search_engine import JSON_PRODUCTS
+        if len(JSON_PRODUCTS) > total_prods:
+            total_prods = len(JSON_PRODUCTS)
+    except Exception:
+        pass
+
+    pending_receipts = stats.get('pending_receipts', 0)
+    badge_pending = f" ({pending_receipts} فیش جدید 🔴)" if pending_receipts > 0 else ""
+
+    last_sync_time = get_last_price_sync_str()
+
     text = (
-        f"⚙️ <b>پنل مدیریت هوشمند AiKala</b>\n"
+        f"⚙️ <b>داشبورد مدیریت بازرگانی آاگ کالا</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📦 تعداد کل کالاها: <b>{stats.get('total_products', 0)}</b>\n"
-        f"🛒 کل سفارشات ثبت‌شده: <b>{stats.get('total_orders', 0)}</b>\n"
-        f"📅 سفارشات امروز: <b>{stats.get('today_orders', 0)}</b>\n"
-        f"📸 تصاویر اختصاصی ثبت‌شده: <b>{len(VERIFIED_PRODUCT_PHOTOS)} کالا</b>\n"
+        f"⏱ <b>آخرین بروزرسانی لیست قیمت محصولات:</b>\n"
+        f"📅 <code>{last_sync_time}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"یک گزینه را انتخاب فرمایید:"
+        f"📊 <b>خلاصه وضعیت فروشگاه:</b>\n"
+        f"▫️ کل کالاهای فعال کاتالوگ: <b>{total_prods:,} کالا</b>\n"
+        f"▫️ کل سفارشات ثبت‌شده: <b>{stats.get('total_orders', 0)} سفارش</b>\n"
+        f"▫️ سفارشات امروز: <b>{stats.get('today_orders', 0)}</b>\n"
+        f"▫️ فیش‌های منتظر بررسی ادمین: <b>{pending_receipts} عدد</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👇 لطفاً بخش مورد نظر خود را انتخاب فرمایید:"
     )
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💻 استخراج لیست قیمت لپ‌تاپ از عکس", callback_data="adm_upload_laptop_photo")],
-        [InlineKeyboardButton("📸 تصاویر تایید شده محصولات", callback_data="adm_verified_photos")],
-        [InlineKeyboardButton("👥 مدیریت کارشناسان پشتیبانی", callback_data="adm_manage_support")],
-        [InlineKeyboardButton("📡 مدیریت کانال‌های تحت پایش", callback_data="adm_channels")],
-        [InlineKeyboardButton("📋 سفارشات در انتظار تایید", callback_data="adm_pending_orders")],
-        [InlineKeyboardButton("📦 مدیریت و تغییر وضعیت سفارشات", callback_data="adm_manage_orders")],
-        [InlineKeyboardButton("🔄 همگام‌سازی گالری عکس‌ها", callback_data="adm_sync_photos")],
-        [InlineKeyboardButton("🗑 پاکسازی و ریست کل عکس‌ها", callback_data="adm_clear_photos_ask")],
-        [InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="back_to_main")]
+        # ۱. سفارشات و فیش‌های بانکی
+        [InlineKeyboardButton(f"📋 مدیریت سفارشات و فیش‌ها{badge_pending}", callback_data="adm_manage_orders")],
+        
+        # ۲. کاتالوگ و قیمت‌ها
+        [
+            InlineKeyboardButton("💻 استخراج قیمت و مشخصات لپ‌تاپ", callback_data="adm_laptop_hub"),
+            InlineKeyboardButton("🔄 بروزرسانی قیمت‌ها (ممتازکالا)", callback_data="adm_sync_live_prices")
+        ],
+        
+        # ۳. پشتیبانی و پیام همگانی
+        [
+            InlineKeyboardButton("👥 کارشناسان پشتیبانی", callback_data="adm_manage_support"),
+            InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data="adm_broadcast_ask")
+        ],
+        
+        # ۴. تنظیمات مالی و گزارش کاتالوگ
+        [
+            InlineKeyboardButton("💳 مشخصات بانکی و بیعانه", callback_data="adm_bank_settings"),
+            InlineKeyboardButton("📊 گزارش وضعیت کاتالوگ", callback_data="adm_catalog_report")
+        ],
+        
+        # بازگشت به منوی اصلی ربات
+        [InlineKeyboardButton("🔙 بازگشت به منوی اصلی فروشگاه", callback_data="back_to_main")]
     ])
+
     if update.callback_query:
         try:
             await update.callback_query.answer()
@@ -88,6 +125,401 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
     else:
         await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+# ─── ساب‌منوهای اختصاصی و ماژولار پنل ادمین ───
+
+async def admin_laptop_hub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مرکز مدیریت و استخراج قیمت و مشخصات لپ‌تاپ"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    # شمارش تعداد لپ‌تاپ‌های ذخیره شده
+    laptop_count = 0
+    try:
+        from search_engine import JSON_PRODUCTS
+        laptop_count = sum(1 for p in JSON_PRODUCTS if p.get("category_key") == "laptop" or p.get("category_name") == "لپ‌تاپ")
+    except Exception:
+        pass
+
+    text = (
+        f"💻 <b>مرکز استخراج هوشمند و ثبت کاتالوگ لپ‌تاپ</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"▫️ تعداد لپ‌تاپ‌های فعال در فروشگاه: <b>{laptop_count} مدل</b>\n"
+        f"▫️ موتور استخراج: <b>هوش مصنوعی بینایی ماشین Gemini + تحلیل‌گر جدول</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"روش ورود اطلاعات مورد نظر خود را انتخاب فرمایید:\n"
+        f"📸 <b>ارسال عکس:</b> اسکرین‌شات یا عکس جدول چاپی/دیجیتال\n"
+        f"📋 <b>کپی متن:</b> پیست کردن مستقیم متن جدول اکسل یا پیام تلگرامی"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📸 ارسال عکس یا اسکرین‌شات جدول", callback_data="adm_upload_laptop_photo")],
+        [InlineKeyboardButton("📋 کپی و ارسال مستقیم متن جدول", callback_data="adm_text_laptop_prompt")],
+        [InlineKeyboardButton("🗑 پاکسازی لیست لپ‌تاپ‌ها", callback_data="adm_clear_laptops_ask")],
+        [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+async def admin_text_laptop_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """راهنمای پیست متن جدول قیمت لپ‌تاپ"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    context.user_data["awaiting_laptop_photo"] = True
+    context.user_data.pop("pending_extracted_laptops", None)
+
+    text = (
+        "📋 <b>استخراج سریع از متن جدول اکسل یا پیام تلگرام:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "لطفاً متن جدول را کپی کرده و <b>همین الان در چت ارسال (Paste) فرمایید.</b>\n\n"
+        "✨ <b>قابلیت‌های هوشمند سیستم:</b>\n"
+        "▫️ پردازش آنی بدون معطلی\n"
+        "▫️ حذف اتوماتیک ستون همکار و تبلیغات متفرقه\n"
+        "▫️ دسته‌بندی بر اساس برند (Dell, HP, Lenovo, Asus, Apple و...)\n"
+        "▫️ استخراج CPU، RAM، Storage و Graphic\n\n"
+        "❌ <i>جهت انصراف، کلمه <code>لغو</code> را بفرستید.</i>"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 انصراف و بازگشت", callback_data="adm_laptop_hub")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+async def admin_clear_laptops_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تاییدیه پاکسازی لیست لپ‌تاپ‌ها"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    text = (
+        "⚠️ <b>هشدار پاکسازی کاتالوگ لپ‌تاپ‌ها:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "آیا اطمینان دارید که می‌خواهید <b>کلیه مدل‌های لپ‌تاپ ثبت‌شده</b> را حذف نمایید؟\n\n"
+        "💡 <i>کالاهای لوازم خانگی بدون تغییر باقی خواهند ماند.</i>"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗑 بله، کلیه لپ‌تاپ‌ها حذف شوند", callback_data="adm_clear_laptops_do")],
+        [InlineKeyboardButton("🔙 انصراف و بازگشت", callback_data="adm_laptop_hub")]
+    ])
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+async def admin_clear_laptops_do(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اجرای پاکسازی فایل لپ‌تاپ‌ها و بارگذاری مجدد کاتالوگ"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    l_file = "laptops_catalog.json"
+    if os.path.exists(l_file):
+        try:
+            with open(l_file, "w", encoding="utf-8") as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Error clearing laptops: {e}")
+
+    try:
+        from bot import load_json_products
+        load_json_products()
+    except Exception:
+        pass
+
+    text = "✅ <b>لیست لپ‌تاپ‌ها با موفقیت پاکسازی شد.</b>"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 بازگشت به منوی لپ‌تاپ", callback_data="adm_laptop_hub")],
+        [InlineKeyboardButton("🔙 پنل مدیریت", callback_data="adm_back_panel")]
+    ])
+    if update.callback_query:
+        await update.callback_query.answer("لیست لپ‌تاپ‌ها پاکسازی شد", show_alert=True)
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+async def admin_sync_live_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اجرای دستی و آنی بروزرسانی قیمت‌ها از ممتازکالا"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    query = update.callback_query
+    if query:
+        await query.answer("در حال دریافت قیمت‌های زنده...", show_alert=False)
+        try:
+            await query.edit_message_text(
+                "⏳ <b>در حال برقراری ارتباط با سرور ممتازکالا و دریافت آخرین قیمت‌ها...</b>\n"
+                "<i>لطفاً چند لحظه شکیبا باشید...</i>",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+    success = False
+    try:
+        success = update_live_prices()
+    except Exception as e:
+        logger.error(f"Error during live sync: {e}")
+
+    new_sync_time = get_last_price_sync_str()
+
+    if success:
+        result_text = (
+            f"✅ <b>قیمت‌ها و وضعیت موجودی با موفقیت بروزرسانی شد!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⏱ <b>آخرین بروزرسانی لیست قیمت محصولات:</b>\n"
+            f"📅 <code>{new_sync_time}</code>\n"
+            f"🌐 منبع: <b>داده‌های زنده ممتازکالا</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"✨ تمامی قیمت‌ها، تغییرات موجودی و تخفیفات کالاها در دیتابیس و کاتالوگ ربات اعمال گردید."
+        )
+    else:
+        result_text = (
+            f"⚠️ <b>بروزرسانی زنده با خطا مواجه شد.</b>\n"
+            f"احتمالاً ارتباط موقت با سرور منبع با تاخیر مواجه شده است.\n"
+            f"آخرین زمان معتبر ثبت‌شده: <code>{new_sync_time}</code>"
+        )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 تلاش مجدد", callback_data="adm_sync_live_prices")],
+        [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+    ])
+
+    if query:
+        try:
+            await query.edit_message_text(result_text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await query.message.reply_text(result_text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(result_text, reply_markup=kb, parse_mode="HTML")
+
+async def admin_bank_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش مشخصات حساب بانکی، کارت، شبا و درصد بیعانه"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    card_num = getattr(config, "CARD_NUMBER", "6104-3386-4929-6106")
+    card_holder = getattr(config, "CARD_HOLDER", "فروشگاه آاگ کالا مهران امین پور")
+    shaba_html = getattr(config, "SHABA_HTML", "IR <code>620120020000005786685564</code>")
+    deposit_pct = getattr(config, "DEPOSIT_PERCENT", 8)
+
+    text = (
+        f"💳 <b>تنظیمات حساب بانکی و بیعانه فروشگاه:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"▫️ شماره کارت رسمی: <code>{card_num}</code>\n"
+        f"▫️ شماره شبا بانکی: {shaba_html}\n"
+        f"▫️ به نام دارنده حساب: <b>{card_holder}</b>\n"
+        f"▫️ درصد محاسبه بیعانه سفارش: <b>{deposit_pct}٪ کل مبلغ کالا</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 <b>نحوه کارکرد در سیستم:</b>\n"
+        f"• این اطلاعات در پیام صدور پیش‌فاکتور خودکار برای مشتری ارسال می‌شود.\n"
+        f"• خریدار با لمس شماره کارت یا شماره شبا، فقط ارقام آن را در حافظه کپی می‌کند.\n"
+        f"• در کادر مالی تصویر پیش‌فاکتور (Ultra HD PNG) نیز همین مشخصات درج می‌شود.\n\n"
+        f"🔧 <i>تنظیمات فوق از طریق متغیرهای سیستمی مدیریت می‌شوند.</i>"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+async def admin_catalog_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """گزارش تفکیک‌شده کاتالوگ محصولات"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    home_count = 0
+    laptop_count = 0
+    brands = set()
+    try:
+        from search_engine import JSON_PRODUCTS
+        for p in JSON_PRODUCTS:
+            if p.get("category_key") == "laptop" or p.get("category_name") == "لپ‌تاپ":
+                laptop_count += 1
+            else:
+                home_count += 1
+            if p.get("brand"):
+                brands.add(p.get("brand"))
+    except Exception:
+        pass
+
+    total = home_count + laptop_count
+    last_sync = get_last_price_sync_str()
+
+    text = (
+        f"📊 <b>گزارش و آمار جامع کاتالوگ فروشگاه:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 کل کالاهای موجود در کاتالوگ: <b>{total:,} کالا</b>\n"
+        f"🏠 لوازم خانگی و آشپزخانه: <b>{home_count:,} کالا</b>\n"
+        f"💻 دسته‌بندی لپ‌تاپ: <b>{laptop_count} مدل</b>\n"
+        f"🏷 تعداد برندهای پوشش‌داده‌شده: <b>{len(brands)} برند</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"⏱ <b>آخرین بروزرسانی لیست قیمت محصولات:</b>\n"
+        f"📅 <code>{last_sync}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"✨ تمام محصولات قابلیت جستجوی هوشمند متنی و فیلتر بر اساس برند و دسته را دارند."
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 بروزرسانی زنده قیمت‌ها", callback_data="adm_sync_live_prices")],
+        [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+async def admin_broadcast_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """درخواست متن پیام همگانی از ادمین"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    context.user_data["awaiting_broadcast_msg"] = True
+
+    active_users = await db.get_all_active_user_ids()
+    count_users = len(active_users)
+
+    text = (
+        f"📢 <b>ارسال پیام همگانی به کاربران ربات:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👥 تعداد کاربران ثبت‌شده در سیستم: <b>{count_users} کاربر</b>\n\n"
+        f"لطفاً متن اطلاعیه، تخفیف یا پیام مورد نظر خود را در همین چت ارسال فرمایید.\n"
+        f"<i>(قبل از ارسال قطعی، یک پیش‌نمایش به همراه دکمه تایید نهایی به شما نمایش داده خواهد شد)</i>\n\n"
+        f"❌ <i>جهت انصراف، کلمه <code>لغو</code> را ارسال فرمایید.</i>"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 انصراف و بازگشت به پنل", callback_data="adm_back_panel")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+async def handle_admin_broadcast_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """دریافت متن ارسالی ادمین جهت برودکست و نمایش پیش‌نمایش"""
+    if not context.user_data.get("awaiting_broadcast_msg"):
+        return False
+
+    user = update.effective_user
+    if not is_admin(user.id):
+        return False
+
+    text = update.message.text.strip() if update.message.text else ""
+    if text.startswith("/cancel") or text.lower() == "لغو":
+        context.user_data.pop("awaiting_broadcast_msg", None)
+        await update.message.reply_text("❌ ارسال پیام همگانی لغو گردید.")
+        await admin_panel_command(update, context)
+        return True
+
+    context.user_data.pop("awaiting_broadcast_msg", None)
+    context.user_data["pending_broadcast_text"] = text
+
+    active_users = await db.get_all_active_user_ids()
+
+    preview = (
+        f"📢 <b>پیش‌نمایش پیام همگانی:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"{text}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👥 این پیام برای <b>{len(active_users)} کاربر</b> ارسال خواهد شد.\n"
+        f"آیا برای ارسال به کلیه کاربران اطمینان دارید؟"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ بله، همین الان ارسال شود", callback_data="adm_broadcast_do"),
+            InlineKeyboardButton("❌ لغو", callback_data="adm_back_panel")
+        ]
+    ])
+    await update.message.reply_text(preview, reply_markup=kb, parse_mode="HTML")
+    return True
+
+async def admin_broadcast_do(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ارسال قطعی پیام همگانی به کلیه کاربران"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    text = context.user_data.pop("pending_broadcast_text", None)
+    if not text:
+        await update.callback_query.answer("پیامی برای ارسال یافت نشد.", show_alert=True)
+        await admin_panel_command(update, context)
+        return
+
+    query = update.callback_query
+    await query.answer("در حال ارسال همگانی...", show_alert=False)
+    status_msg = await query.message.reply_text("⏳ <b>در حال ارسال پیام همگانی به کاربران...</b>", parse_mode="HTML")
+
+    active_users = await db.get_all_active_user_ids()
+    sent = 0
+    failed = 0
+
+    for uid in active_users:
+        if uid == user.id:
+            continue
+        try:
+            await context.bot.send_message(chat_id=uid, text=text, parse_mode="HTML")
+            sent += 1
+            await asyncio.sleep(0.05)  # رعایت محدودیت نرخ تلگرام
+        except Exception:
+            failed += 1
+
+    report = (
+        f"🎉 <b>نتیجه ارسال پیام همگانی:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"✅ ارسال موفق: <b>{sent} کاربر</b>\n"
+        f"❌ ناموفق (مسدود یا غیرفعال): <b>{failed} کاربر</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+    ])
+    try:
+        await status_msg.edit_text(report, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await query.message.reply_text(report, reply_markup=kb, parse_mode="HTML")
 
 async def sync_photos_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
