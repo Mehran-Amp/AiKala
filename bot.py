@@ -8,6 +8,7 @@ AiKala Telegram Bot - Modular Production Core (bot.py)
 """
 
 import os
+import sys
 import re
 import logging
 from datetime import datetime
