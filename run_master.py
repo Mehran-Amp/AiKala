@@ -58,13 +58,6 @@ CORE_SERVICES: List[Dict[str, Any]] = [
         "script": "scheduler_service.py",
         "critical": False,
         "env_check": None
-    },
-    {
-        "id": "monitor",
-        "name": "📡 Channel Media Monitor & Publisher",
-        "script": "channel_monitor.py",
-        "critical": False,
-        "env_check": "TELEGRAM_API_ID"
     }
 ]
 
@@ -173,7 +166,7 @@ def main():
         description="AiKala Master Runner - Supervised multi-service manager for @AiKala_bot"
     )
     parser.add_argument("--bot-only", action="store_true", help="Run Telegram bot only")
-    parser.add_argument("--monitor-only", action="store_true", help="Run channel monitor only")
+    parser.add_argument("--scheduler-only", action="store_true", help="Run catalog & price scheduler only")
     parser.add_argument("--no-restart", action="store_true", help="Do not auto-restart exited processes")
     parser.add_argument("--check", action="store_true", help="Perform pre-flight syntax check and exit")
     args = parser.parse_args()
@@ -182,8 +175,8 @@ def main():
     selected_services = []
     if args.bot_only:
         selected_services = [s for s in CORE_SERVICES if s["id"] == "bot"]
-    elif args.monitor_only:
-        selected_services = [s for s in CORE_SERVICES if s["id"] == "monitor"]
+    elif args.scheduler_only:
+        selected_services = [s for s in CORE_SERVICES if s["id"] == "scheduler"]
     else:
         selected_services = CORE_SERVICES
 
@@ -213,12 +206,8 @@ def main():
 
     # بررسی متغیرهای محیطی با هشدارهای آموزنده
     bot_token = getattr(config, "TELEGRAM_BOT_TOKEN", os.getenv("TELEGRAM_BOT_TOKEN", ""))
-    if not bot_token and not args.monitor_only:
+    if not bot_token and not args.scheduler_only:
         logger.warning("⚠️ TELEGRAM_BOT_TOKEN is not configured! bot.py will wait for credentials.")
-
-    tele_api_id = getattr(config, "TELEGRAM_API_ID", os.getenv("TELEGRAM_API_ID", ""))
-    if not tele_api_id and not args.bot_only:
-        logger.info("ℹ️ TELEGRAM_API_ID is not configured (channel monitor idle).")
 
     # راه‌اندازی اولیه سرویس‌ها
     logger.info("🌟 Bootstrapping selected services:")
