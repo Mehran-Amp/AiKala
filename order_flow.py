@@ -26,8 +26,10 @@ try:
 except ImportError:
     config = None
 
-CARD_NUMBER = getattr(config, "CARD_NUMBER", getattr(config, "CARD_NO", "6037990000000000"))
-CARD_HOLDER = getattr(config, "CARD_HOLDER", getattr(config, "CARD_NAME", "بازرگانی آی کالا"))
+CARD_NUMBER = getattr(config, "CARD_NUMBER", getattr(config, "CARD_NO", "6104-3386-4929-6106"))
+CARD_HOLDER = getattr(config, "CARD_HOLDER", getattr(config, "CARD_NAME", "فروشگاه آاگ کالا مهران امین پور"))
+CARD_SHABA = getattr(config, "CARD_SHABA", "IR 620120020000005786685564")
+SHABA_HTML = getattr(config, "SHABA_HTML", "IR <code>620120020000005786685564</code>")
 DEPOSIT_AMOUNT = getattr(config, "DEPOSIT_AMOUNT", "۲,۰۰۰,۰۰۰")
 SUPPORT_USERNAME = getattr(config, "SUPPORT_USERNAME", "@AiKala_Admin")
 ADMIN_IDS = getattr(config, "ADMIN_IDS", [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()] if os.getenv("ADMIN_IDS") else [])
@@ -221,14 +223,22 @@ async def order_postal_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ۱. تولید پیش‌فاکتور رسمی دیجیتال (Ultra HD PNG) با برچسب نارنجی در انتظار بیعانه
     invoice_path = None
+    out_png = f"invoices/pre_invoice_{order_code}.png"
     try:
         import asyncio
         inv_data = build_invoice_data_from_order(order_data, prod)
         os.makedirs("invoices", exist_ok=True)
-        out_png = f"invoices/pre_invoice_{order_code}.png"
         invoice_path = await asyncio.to_thread(generate_invoice_png, inv_data, output_path=out_png, is_pre_invoice=True)
     except Exception as e:
-        logger.error(f"Error generating pre-invoice PNG: {e}")
+        logger.error(f"Async pre-invoice generation failed: {e}")
+
+    # فال‌بک تولید مستقیم سنکرون در صورت عدم موفقیت در ترد
+    if not invoice_path or not os.path.exists(invoice_path):
+        try:
+            inv_data = build_invoice_data_from_order(order_data, prod)
+            invoice_path = generate_invoice_png(inv_data, output_path=out_png, is_pre_invoice=True)
+        except Exception as e2:
+            logger.error(f"Sync fallback pre-invoice generation error: {e2}")
 
     f_total_price = to_fa_digits(f"{total_price:,}")
     f_deposit = to_fa_digits(f"{deposit:,}")
@@ -249,10 +259,11 @@ async def order_postal_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"▫️ <b>مانده تسویه پس از تحویل و تست سلامت:</b> <b>{f_remaining} تومان</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"▫️ شماره کارت رسمی: <code>{CARD_NUMBER}</code>\n"
+        f"▫️ شماره شبا بانکی: {SHABA_HTML}\n"
         f"▫️ به نام: <b>{CARD_HOLDER}</b>\n"
         f"⏱ <b>مهلت اعتبار رزرو انبار:</b> ۵ ساعت کاری\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ <i>نکته مهم: جهت قطعی شدن سفارش و صدور فاکتور نهایی فروش با مهر شرکتی، لطفاً بیعانه ({f_deposit} تومان) را واریز و عکس فیش را ارسال فرمایید.</i>"
+        f"⚠️ <i>نکته مهم: جهت قطعی شدن سفارش و صدور فاکتور نهایی فروش با مهر شرکتی، لطفاً بیعانه ({f_deposit} تومان) را از طریق کارت به کارت یا شماره شبا واریز و عکس فیش را ارسال فرمایید.</i>"
     )
 
     kb = InlineKeyboardMarkup([
@@ -262,46 +273,66 @@ async def order_postal_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="back_to_main")]
     ])
 
-    if invoice_path and os.path.exists(invoice_path):
-        photo_sent = False
-        chat_id = update.effective_chat.id if update.effective_chat else update.effective_user.id
+    chat_id = update.effective_chat.id if update.effective_chat else update.effective_user.id
+    photo_sent = False
 
-        # تلاش اول: ارسال مستقیم با reply_photo و تایم‌اوت اختصاصی ۹۰ ثانیه
+    if invoice_path and os.path.exists(invoice_path):
+        # کپشن مختصر، پایدار و بدون ریسک شکستن تگ HTML در محدودیت کاراکتر تلگرام
+        photo_caption = (
+            f"🧾 <b>تصویر پیش‌فاکتور رسمی سفارش @AiKala_bot</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔖 شماره سفارش: <code>{order_code}</code>\n"
+            f"📦 کالا: {prod.get('name', 'کالای سفارشی')}\n"
+            f"💰 قیمت کل: <b>{f_total_price} تومان</b>\n"
+            f"💳 بیعانه پیش‌پرداخت (۸٪): <b>{f_deposit} تومان</b>\n"
+            f"▫️ مانده تسویه در محل: <b>{f_remaining} تومان</b>\n"
+            f"⏳ وضعیت: در انتظار واریز بیعانه"
+        )
+
+        # تلاش ۱: ارسال به عنوان Photo
         try:
             with open(invoice_path, "rb") as f_img:
-                await update.message.reply_photo(
+                await context.bot.send_photo(
+                    chat_id=chat_id,
                     photo=f_img,
-                    caption=invoice_msg[:1024],
-                    reply_markup=kb,
+                    caption=photo_caption,
                     parse_mode="HTML",
                     read_timeout=60.0,
                     write_timeout=90.0,
                     connect_timeout=30.0
                 )
             photo_sent = True
-        except Exception as e:
-            logger.warning(f"reply_photo for pre-invoice failed ({e}), attempting fallback send_photo...")
-            # تلاش دوم: ارسال مستقیم از طریق context.bot.send_photo
+        except Exception as e_photo:
+            logger.warning(f"send_photo for pre-invoice failed ({e_photo}), attempting send_document fallback...")
+            # تلاش ۲: ارسال به عنوان Document در صورت خطای شبکه یا فشرده‌سازی
             try:
-                with open(invoice_path, "rb") as f_img:
-                    await context.bot.send_photo(
+                with open(invoice_path, "rb") as f_doc:
+                    await context.bot.send_document(
                         chat_id=chat_id,
-                        photo=f_img,
-                        caption=invoice_msg[:1024],
-                        reply_markup=kb,
+                        document=f_doc,
+                        filename=f"pre_invoice_{order_code}.png",
+                        caption=photo_caption,
                         parse_mode="HTML",
                         read_timeout=60.0,
                         write_timeout=90.0,
                         connect_timeout=30.0
                     )
                 photo_sent = True
-            except Exception as e2:
-                logger.error(f"send_photo also failed for pre-invoice: {e2}")
+            except Exception as e_doc:
+                logger.error(f"send_document also failed: {e_doc}")
 
-        if not photo_sent:
+    # ارسال اطلاعات کامل حساب، جزئیات سفارش و کلیدهای شیشه‌ای عملیاتی
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=invoice_msg,
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+    except Exception as ex_msg:
+        logger.error(f"Error sending invoice text message: {ex_msg}")
+        if update.message:
             await update.message.reply_text(invoice_msg, reply_markup=kb, parse_mode="HTML")
-    else:
-        await update.message.reply_text(invoice_msg, reply_markup=kb, parse_mode="HTML")
 
     return ConversationHandler.END
 

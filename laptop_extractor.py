@@ -12,10 +12,15 @@ import os
 import json
 import base64
 import logging
-import urllib.request
-import urllib.error
 import re
 from typing import List, Dict, Any, Optional
+
+try:
+    import requests
+except ImportError:
+    requests = None
+    import urllib.request
+    import urllib.error
 
 logger = logging.getLogger(__name__)
 
@@ -229,46 +234,70 @@ def extract_laptops_from_image(image_bytes: bytes, mime_type: str = "image/jpeg"
         }
         
         try:
-            req_data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                url,
-                data=req_data,
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=45) as resp:
-                result_json = json.loads(resp.read().decode("utf-8"))
-                
-                candidates = result_json.get("candidates", [])
-                if not candidates:
+            raw_text = ""
+            if requests:
+                # استفاده از requests با پشتیبانی بومی از پروکسی‌های محیطی و سیستمی
+                session = requests.Session()
+                # بررسی خودکار پروکسی‌های استاندارد لوکال در صورت عدم تعریف در محیط
+                if not os.environ.get("HTTPS_PROXY") and not os.environ.get("https_proxy"):
+                    for candidate_proxy in ["http://127.0.0.1:10809", "http://127.0.0.1:10808", "http://127.0.0.1:7890", "http://127.0.0.1:2081"]:
+                        try:
+                            # تست خیلی سریع دسترسی به پروکسی لوکال
+                            session.proxies = {"http": candidate_proxy, "https": candidate_proxy}
+                            break
+                        except Exception:
+                            pass
+
+                resp = session.post(url, json=payload, timeout=45)
+                if resp.status_code != 200:
+                    err_msg = resp.text
+                    logger.warning(f"Model {model_name} HTTP {resp.status_code}: {err_msg}")
+                    last_error = f"HTTP {resp.status_code}: {err_msg}"
+                    if "API_KEY_INVALID" in err_msg or (resp.status_code == 400 and "API key not valid" in err_msg):
+                        raise ValueError("کلید GEMINI_API_KEY نامعتبر است. لطفاً با دستور /setgemini یک کلید معتبر وارد نمایید.")
                     continue
-                
-                content_parts = candidates[0].get("content", {}).get("parts", [])
-                raw_text = "".join([p.get("text", "") for p in content_parts]).strip()
-                
-                # پاکسازی بلوک‌های کد مارک‌داون در صورت وجود
-                if raw_text.startswith("```"):
-                    raw_text = re.sub(r"^```[a-zA-Z]*\n?", "", raw_text)
-                    raw_text = re.sub(r"\n?```$", "", raw_text).strip()
-                
-                parsed_data = json.loads(raw_text)
-                if isinstance(parsed_data, list):
-                    logger.info(f"Successfully extracted {len(parsed_data)} laptops using {model_name}.")
-                    return clean_and_normalize_laptops(parsed_data)
-                elif isinstance(parsed_data, dict) and "laptops" in parsed_data:
-                    return clean_and_normalize_laptops(parsed_data["laptops"])
-        except urllib.error.HTTPError as e:
-            err_msg = e.read().decode("utf-8")
-            logger.warning(f"Model {model_name} HTTP {e.code}: {err_msg}")
-            last_error = f"HTTP {e.code}: {err_msg}"
-            # اگر خطای API_KEY نامعتبر باشد بلافاصله اکسپشن بدهیم
-            if "API_KEY_INVALID" in err_msg or e.code == 400 and "API key not valid" in err_msg:
-                raise ValueError("کلید GEMINI_API_KEY نامعتبر است. لطفاً یک کلید معتبر از Google AI Studio وارد کنید.")
-            continue
+
+                result_json = resp.json()
+            else:
+                req_data = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(
+                    url,
+                    data=req_data,
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=45) as resp:
+                    result_json = json.loads(resp.read().decode("utf-8"))
+
+            candidates = result_json.get("candidates", [])
+            if not candidates:
+                continue
+
+            content_parts = candidates[0].get("content", {}).get("parts", [])
+            raw_text = "".join([p.get("text", "") for p in content_parts]).strip()
+
+            # پاکسازی بلوک‌های کد مارک‌داون در صورت وجود
+            if raw_text.startswith("```"):
+                raw_text = re.sub(r"^```[a-zA-Z]*\n?", "", raw_text)
+                raw_text = re.sub(r"\n?```$", "", raw_text).strip()
+
+            parsed_data = json.loads(raw_text)
+            if isinstance(parsed_data, list):
+                logger.info(f"Successfully extracted {len(parsed_data)} laptops using {model_name}.")
+                return clean_and_normalize_laptops(parsed_data)
+            elif isinstance(parsed_data, dict) and "laptops" in parsed_data:
+                return clean_and_normalize_laptops(parsed_data["laptops"])
+
+        except ValueError:
+            raise
         except Exception as e:
+            err_s = str(e)
             logger.error(f"Error calling Gemini with model {model_name}: {e}")
-            last_error = str(e)
+            if "10053" in err_s or "ConnectionAbortedError" in err_s or "Connection aborted" in err_s:
+                last_error = "قطع ارتباط با سرور گوگل توسط اینترنت یا فیلترشکن سیستم (Errno 10053). لطفاً اتصال VPN را بررسی کنید یا متن جدول را کپی و ارسال فرمایید."
+            else:
+                last_error = err_s
             continue
-            
+
     raise RuntimeError(f"خطا در پردازش تصویر با هوش مصنوعی: {last_error}")
 
 def normalize_price_value(price_val: Any) -> int:

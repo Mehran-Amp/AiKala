@@ -265,14 +265,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         except Exception as err:
             logger.error(f"Error extracting laptops from image: {err}")
-            await status_msg.edit_text(
-                f"❌ <b>خطا در استخراج با هوش مصنوعی:</b>\n<code>{err}</code>\n\n"
+            err_text = str(err)
+            network_hint = ""
+            if "10053" in err_text or "Connection" in err_text or "abort" in err_text.lower():
+                network_hint = (
+                    "⚠️ <b>علت خطا:</b> ارتباط اینترنت یا نرم‌افزار ضدتحریم / VPN با سرور گوگل قطع شد (خطای 10053 ویندوز).\n"
+                    "لطفاً فیلترشکن خود را بررسی و در صورت امکان حالت Tun / Global را فعال نمایید.\n\n"
+                )
+
+            alert_msg = (
+                f"❌ <b>خطا در استخراج با هوش مصنوعی:</b>\n<code>{err_text[:250]}</code>\n\n"
+                f"{network_hint}"
                 "💡 <b>راهکارهای سریع:</b>\n"
-                "۱. می‌توانید کلید فعال Gemini خود را با دستور زیر تنظیم فرمایید:\n"
-                "<code>/setgemini YOUR_API_KEY</code>\n\n"
-                "۲. یا متن جدول اکسل/پیام تلگرامی را کپی کرده و مستقیماً در چت ارسال فرمایید.",
-                parse_mode="HTML"
+                "۱. متن جدول اکسل یا پیام تلگرامی را کپی کرده و مستقیماً ارسال فرمایید (بدون نیاز به هوش مصنوعی و سریع).\n"
+                "۲. یا کلید اختصاصی فعال را با دستور <code>/setgemini YOUR_KEY</code> تنظیم نمایید."
             )
+            try:
+                await status_msg.edit_text(alert_msg, parse_mode="HTML")
+            except Exception as e_edit:
+                logger.warning(f"Could not edit status_msg ({e_edit}), trying reply_text...")
+                try:
+                    await asyncio.sleep(2)
+                    await update.message.reply_text(alert_msg, parse_mode="HTML")
+                except Exception as e_reply:
+                    logger.error(f"Failed to send error alert to admin: {e_reply}")
             return
 
     text = update.message.text.strip() if update.message.text else ""

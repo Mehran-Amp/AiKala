@@ -388,7 +388,23 @@ async def order_tracking_callback_handler(update: Update, context: ContextTypes.
                     )
                 return
             except Exception as e:
-                logger.error(f"Error sending invoice photo: {e}")
+                logger.warning(f"Error sending invoice photo ({e}), attempting document fallback...")
+                try:
+                    with open(file_path, "rb") as f_doc:
+                        await context.bot.send_document(
+                            chat_id=query.message.chat_id,
+                            document=f_doc,
+                            filename=os.path.basename(file_path),
+                            caption=cap,
+                            reply_markup=inv_kb,
+                            parse_mode="HTML",
+                            read_timeout=60.0,
+                            write_timeout=90.0,
+                            connect_timeout=30.0
+                        )
+                    return
+                except Exception as e_doc:
+                    logger.error(f"Error sending invoice document: {e_doc}")
 
         await query.message.reply_text(cap, reply_markup=inv_kb, parse_mode="HTML")
 

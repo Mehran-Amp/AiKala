@@ -753,6 +753,7 @@ async def order_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💳 <b>اطلاعات پرداخت بیعانه سفارش #{order_code}</b>\\n\\n"
         f"💰 مبلغ بیعانه پیش‌پرداخت (۸٪): <b>{deposit:,} تومان</b>\\n\\n"
         f"💳 شماره کارت: <code>{DEPOSIT_CARD_NUMBER}</code>\\n"
+        f"▫️ شماره شبا بانکی: IR <code>620120020000005786685564</code>\\n"
         f"👤 به نام: <b>{DEPOSIT_CARD_NAME}</b>\\n\\n"
         "📎 لطفاً پس از واریز، <b>تصویر فیش واریزی یا شماره پیگیری</b> را همینجا ارسال فرمایید:"
     )

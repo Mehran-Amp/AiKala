@@ -109,15 +109,17 @@ try:
     SHOP_PHONE = getattr(config, "SHOP_PHONE", "۰۲۱-۹۱۰۰۰۰۰۰  |  ۰۹۱۲۳۴۵۶۷۸۹")
     SHOP_ADDRESS = getattr(config, "SHOP_ADDRESS", "تهران، سه راه امین حضور، مجتمع تجاری نگین")
     LICENSE_NO = getattr(config, "LICENSE_NO", "۹۸۴۱۲۵-الف")
-    CARD_NUMBER = getattr(config, "CARD_NUMBER", "۶۰۳۷-۹۹۱۸-۱۲۳۴-۵۶۷۸")
-    CARD_HOLDER = getattr(config, "CARD_HOLDER", "بازرگانی هوشمند کالا")
+    CARD_NUMBER = getattr(config, "CARD_NUMBER", "6104-3386-4929-6106")
+    CARD_HOLDER = getattr(config, "CARD_HOLDER", "فروشگاه آاگ کالا مهران امین پور")
+    CARD_SHABA = getattr(config, "CARD_SHABA", "IR 620120020000005786685564")
 except ImportError:
     SHOP_NAME = "AiKala_bot هوشمند کالا اولین فروشگاه تلگرامی لوازم خانگی و لپتاب در ایران"
     SHOP_PHONE = "۰۲۱-۹۱۰۰۰۰۰۰  |  ۰۹۱۲۳۴۵۶۷۸۹"
     SHOP_ADDRESS = "تهران، سه راه امین حضور، مجتمع تجاری نگین"
     LICENSE_NO = "۹۸۴۱۲۵-الف"
-    CARD_NUMBER = "۶۰۳۷-۹۹۱۸-۱۲۳۴-۵۶۷۸"
-    CARD_HOLDER = "بازرگانی هوشمند کالا"
+    CARD_NUMBER = "6104-3386-4929-6106"
+    CARD_HOLDER = "فروشگاه آاگ کالا مهران امین پور"
+    CARD_SHABA = "IR 620120020000005786685564"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
@@ -537,13 +539,18 @@ def generate_invoice_png(order_data: dict, output_path: str = "invoice.png", is_
 
         card_num_raw = str(order_data.get("card_number") or CARD_NUMBER)
         card_holder_raw = str(order_data.get("card_holder") or CARD_HOLDER)
+        card_shaba_raw = str(order_data.get("card_shaba") or CARD_SHABA or "").strip()
 
         # تولید بندها با خط‌شکنی خودکار برای جلوگیری قطعی از همپوشانی متون
         raw_paragraphs = [
             f"• شماره کارت واریز: {to_fa_digits(card_num_raw)}",
+        ]
+        if card_shaba_raw:
+            raw_paragraphs.append(f"• شماره شبا بانکی: {to_fa_digits(card_shaba_raw)}")
+        raw_paragraphs.extend([
             f"• به نام دارنده حساب: {card_holder_raw}",
             "• پس از واریز بیعانه، فاکتور رسمی قطعی فروش همراه با مهر شرکت صادر می‌گردد."
-        ]
+        ])
 
         f_fb_r = _get_font(19)
         cur_fy = y + 58
@@ -787,6 +794,9 @@ def build_invoice_data_from_order(order: dict, product: dict = None) -> dict:
         "shop_phone": SHOP_PHONE,
         "shop_address": SHOP_ADDRESS,
         "license_no": LICENSE_NO,
+        "card_number": CARD_NUMBER,
+        "card_holder": CARD_HOLDER,
+        "card_shaba": CARD_SHABA,
         "invoice_number": f"INV-{order.get('order_code', '')}",
         "date": _persian_now_formatted(),
         "order_code": order.get('order_code', ''),

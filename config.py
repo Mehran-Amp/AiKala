@@ -60,10 +60,28 @@ LICENSE_NO: str = os.getenv("LICENSE_NO", "125366980")
 DEPOSIT_PERCENT: int = 8
 DEPOSIT_CARD_NUMBER: str = os.getenv("DEPOSIT_CARD_NUMBER", "6104-3386-4929-6106")
 DEPOSIT_CARD_NAME: str = os.getenv("DEPOSIT_CARD_NAME", "فروشگاه آاگ کالا مهران امین پور")
+DEPOSIT_CARD_SHABA: str = os.getenv("DEPOSIT_CARD_SHABA", "IR 620120020000005786685564")
 
 # متغیرهای معادل جهت سازگاری کامل با تمامی توابع bot.py
 CARD_NUMBER: str = DEPOSIT_CARD_NUMBER
 CARD_HOLDER: str = DEPOSIT_CARD_NAME
+CARD_SHABA: str = DEPOSIT_CARD_SHABA
+
+import re
+def get_shaba_digits(shaba_str: str = None) -> str:
+    """استخراج فقط ارقام عددی شبا جهت کپی شدن صرفاً بخش عددی بدون پیشوند IR"""
+    target = shaba_str if shaba_str is not None else DEPOSIT_CARD_SHABA
+    return "".join(re.findall(r'\d+', target or ""))
+
+def get_shaba_html(shaba_str: str = None) -> str:
+    """تولید قالب HTML شماره شبا که فقط ارقام آن داخل تگ code است تا با کلیک، فقط اعداد کپی شوند"""
+    digits = get_shaba_digits(shaba_str)
+    if not digits:
+        return ""
+    return f"IR <code>{digits}</code>"
+
+SHABA_DIGITS: str = get_shaba_digits(DEPOSIT_CARD_SHABA)
+SHABA_HTML: str = get_shaba_html(DEPOSIT_CARD_SHABA)
 DEPOSIT_AMOUNT: str = "۲,۰۰۰,۰۰۰"
 PRICE_NOTE: str = "⚠️ به علت نوسانات لحظه‌ای ارز، استعلام قیمت قطعی قبل از بارگیری الزامی است."
 
