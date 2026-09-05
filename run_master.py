@@ -33,10 +33,14 @@ except ImportError:
 # ─── تنظیمات لاگینگ یکپارچه ───
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - [MASTER] - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
+    format="%(asctime)s | %(levelname)-7s | [MASTER] %(message)s",
+    datefmt="%H:%M:%S"
 )
 logger = logging.getLogger("MasterRunner")
+
+# حذف لاگ‌های مکرر و اسپم شبکه (api.telegram.org و ارتباطات وب)
+for _noisy in ("httpx", "httpcore", "urllib3"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 # ─── تعریف سرویس‌های هسته ───
 CORE_SERVICES: List[Dict[str, Any]] = [
@@ -69,31 +73,41 @@ SHUTDOWN_REQUESTED = False
 
 
 def check_preflight_syntax(scripts: List[str]) -> bool:
-    """بررسی سلامت نحوی کدهای پایتون قبل از شروع سرویس‌ها"""
-    logger.info("🔍 Performing pre-flight syntax checks on core modules...")
-    modules_to_check = list(set(scripts + ["guidbuy.py", "support_service.py", "keyboards.py", "database.py", "order_flow.py", "photo_service.py", "order_tracking.py", "scheduler_service.py", "sync_prices.py", "sync_catalog.py"]))
-    all_ok = True
+    """بررسی سلامت نحوی کدهای پایتون قبل از شروع سرویس‌ها (به صورت خلاصه و تمیز)"""
+    modules_to_check = sorted(list(set(scripts + [
+        "guidbuy.py", "support_service.py", "keyboards.py", "database.py",
+        "order_flow.py", "photo_service.py", "order_tracking.py",
+        "scheduler_service.py", "sync_prices.py", "sync_catalog.py",
+        "laptop_extractor.py", "admin_panel.py"
+    ])))
+    failed = []
 
     for mod in modules_to_check:
         if not os.path.exists(mod):
             continue
         try:
             py_compile.compile(mod, doraise=True)
-            logger.info(f"   ✓ {mod}: Syntax OK")
         except py_compile.PyCompileError as e:
-            logger.error(f"   ✗ {mod}: Syntax error detected! {e}")
-            all_ok = False
+            logger.error(f"   ✗ خطای نحوی در فایل {mod}: {e}")
+            failed.append(mod)
 
-    return all_ok
+    if failed:
+        logger.error(f"❌ {len(failed)} ماژول دارای خطای نحوی هستند. توقف اجرا.")
+        return False
+
+    logger.info(f"✅ بررسی سلامت ماژول‌ها: تمامی {len(modules_to_check)} ماژول پروژه تایید شدند (Syntax OK).")
+    return True
 
 
 def start_process(script_name: str) -> subprocess.Popen:
     """اجرای اسکریپت در پروسس مستقل با بافر آنی خروجی بدون تاخیر لاگ"""
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
     return subprocess.Popen(
         [sys.executable, "-u", script_name],
         stdout=None,
         stderr=None,
-        env=os.environ.copy()
+        env=env
     )
 
 
@@ -172,20 +186,22 @@ def main():
     else:
         selected_services = CORE_SERVICES
 
-    # چاپ بنر آغازین
-    logger.info("=" * 68)
-    logger.info("🚀 AiKala Master Runner - @AiKala_bot هوشمند کالا")
-    logger.info("   Unified Process Supervisor, Watchdog & Health Monitor")
-    logger.info("=" * 68)
+    # چاپ بنر آغازین جمع‌وجور و حرفه‌ای
+    sep = "━" * 56
+    print(f"\n{sep}")
+    print("🚀 سامانه مدیریت یکپارچه ربات آی‌کالا (AiKala Master Runner)")
+    print(f"⏱ زمان شروع: {datetime.now().strftime('%Y/%m/%d - %H:%M:%S')}")
+    print("🛡 فیلتر لاگ: درخواست‌های تکراری شبکه (api.telegram.org) خلاصه و مهار شدند.")
+    print(f"{sep}")
 
     # تست اولیه سلامت سینتکس
     scripts_to_check = [s["script"] for s in selected_services]
     if not check_preflight_syntax(scripts_to_check):
-        logger.error("❌ Pre-flight checks failed due to syntax errors. Aborting launch.")
+        logger.error("❌ توقف اجرا به دلیل وجود خطای نحوی.")
         sys.exit(1)
 
     if args.check:
-        logger.info("✅ Pre-flight checks completed successfully.")
+        logger.info("✅ تست سلامت کلیه ماژول‌ها با موفقیت کامل انجام شد.")
         sys.exit(0)
 
     # ثبت سیگنال‌های سیستمی
@@ -197,16 +213,15 @@ def main():
     # بررسی متغیرهای محیطی با هشدارهای آموزنده
     bot_token = getattr(config, "TELEGRAM_BOT_TOKEN", os.getenv("TELEGRAM_BOT_TOKEN", ""))
     if not bot_token and not args.monitor_only:
-        logger.warning("⚠️ TELEGRAM_BOT_TOKEN is not configured! bot.py will wait for credentials.")
+        logger.warning("⚠️ متغیر TELEGRAM_BOT_TOKEN تنظیم نشده است! ربات منتظر توکن خواهد ماند.")
 
     tele_api_id = getattr(config, "TELEGRAM_API_ID", os.getenv("TELEGRAM_API_ID", ""))
     if not tele_api_id and not args.bot_only:
-        logger.warning("ℹ️ TELEGRAM_API_ID is not configured. channel_monitor.py may stay idle.")
+        logger.info("ℹ️ متغیر TELEGRAM_API_ID موجود نیست (مانیتور کانال غیرفعال خواهد بود).")
 
     # راه‌اندازی اولیه سرویس‌ها
-    logger.info("🌟 Bootstrapping selected services...")
+    logger.info("🌟 راه‌اندازی سرویس‌های برگزیده:")
     for s in selected_services:
-        logger.info(f"Starting {s['name']} ({s['script']})...")
         p = start_process(s["script"])
         worker_state = {
             "config": s,
@@ -217,10 +232,12 @@ def main():
             "backoff_delay": 2.0,
         }
         ACTIVE_WORKERS.append(worker_state)
-        time.sleep(1.5)
+        logger.info(f"   🟢 {s['name']} (PID: {p.pid})")
+        time.sleep(1.0)
 
-    logger.info("✅ All core services are now ACTIVE and monitored by Master Watchdog.")
-    logger.info("💡 Press Ctrl+C at any time to gracefully terminate all processes.\n")
+    print(f"{sep}")
+    logger.info("✅ سرویس‌ها تحت نظارت ناظر هوشمند (Watchdog) فعال هستند.")
+    logger.info("💡 جهت خروج ایمن کلید Ctrl+C را فشار دهید.\n")
 
     last_heartbeat = time.time()
     heartbeat_interval = 1800  # هر ۳۰ دقیقه گزارش وضعیت کامل

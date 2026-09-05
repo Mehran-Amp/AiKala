@@ -36,8 +36,14 @@ TARGET_IMAGE_CHANNEL = "@Aikala_Image"
 STATE_FILE = "monitor_state.json"
 BACKFILL_DAYS = 60
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | [Monitor] %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger("ChannelMonitor")
+for _n in ("telethon", "httpx", "httpcore", "urllib3"):
+    logging.getLogger(_n).setLevel(logging.WARNING)
 
 
 def clean_caption_preserve_specs(text: str) -> str:

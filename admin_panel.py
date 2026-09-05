@@ -93,7 +93,10 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         # ۲. کاتالوگ و قیمت‌ها
         [
-            InlineKeyboardButton("💻 لیست جدید لپتاپ", callback_data="adm_laptop_hub"),
+            InlineKeyboardButton("📊 ارسال فایل اکسل لپ‌تاپ (.xlsx)", callback_data="adm_upload_laptop_excel"),
+            InlineKeyboardButton("💻 مدیریت کاتالوگ لپ‌تاپ", callback_data="adm_laptop_hub")
+        ],
+        [
             InlineKeyboardButton("🔄 بروزرسانی دستی قیمتها", callback_data="adm_sync_live_prices")
         ],
         
@@ -217,17 +220,19 @@ async def admin_text_laptop_prompt(update: Update, context: ContextTypes.DEFAULT
     context.user_data.pop("pending_extracted_laptops", None)
 
     text = (
-        "📋 <b>استخراج سریع از متن جدول اکسل یا پیام تلگرام:</b>\n"
+        "📋 <b>استخراج سریع از جدول اکسل یا پیام تلگرام:</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "لطفاً متن جدول را کپی کرده و <b>همین الان در چت ارسال (Paste) فرمایید.</b>\n\n"
+        "💡 <b>شما می‌توانید مستقیماً خود فایل اکسل (.xlsx / .csv) را در همین چت بفرستید</b> یا متن جدول را کپی و پیست فرمایید.\n\n"
         "✨ <b>قابلیت‌های هوشمند سیستم:</b>\n"
+        "▫️ خواندن خودکار فایل‌های اکسل (.xlsx و .csv)\n"
         "▫️ پردازش آنی بدون معطلی\n"
-        "▫️ حذف اتوماتیک ستون همکار و تبلیغات متفرقه\n"
+        "🚫 حذف اتوماتیک ستون همکار و تبلیغات متفرقه\n"
         "▫️ دسته‌بندی بر اساس برند (Dell, HP, Lenovo, Asus, Apple و...)\n"
-        "▫️ استخراج CPU، RAM، Storage و Graphic\n\n"
+        "▫️ استخراج CPU، RAM، Storage، Graphic و گرید\n\n"
         "❌ <i>جهت انصراف، کلمه <code>لغو</code> را بفرستید.</i>"
     )
     kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 ارسال فایل اکسل (.xlsx / .csv)", callback_data="adm_upload_laptop_excel")],
         [InlineKeyboardButton("🔙 انصراف و بازگشت", callback_data="adm_laptop_hub")]
     ])
 

@@ -38,12 +38,17 @@ PHOTOS_CHANNEL = getattr(config, "PHOTOS_CHANNEL", getattr(config, "PHOTO_CHANNE
 SUPPORT_USERNAME = getattr(config, "SUPPORT_USERNAME", "@AiKala_Admin")
 ADMIN_IDS = getattr(config, "ADMIN_IDS", [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()] if os.getenv("ADMIN_IDS") else [])
 
-# ─── پیکربندی لاگر ───
+# ─── پیکربندی بهینه‌سازی‌شده و خلاصه لاگر ───
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s | %(levelname)-7s | [%(name)s] %(message)s",
+    datefmt="%H:%M:%S"
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("AiKalaBot")
+
+# 🛡️ حذف قطعی اسپم لاگ‌های درخواست خام شبکه (جلوگیری از پر شدن مکرر صفحه با لینک‌های api.telegram.org)
+for _noisy in ("httpx", "httpcore", "telegram.ext.Application", "telegram.ext.ExtBot", "urllib3", "apscheduler"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 # ─── ماژول‌های سیستم ───
 from database import Database
@@ -1233,6 +1238,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["awaiting_laptop_photo"] = True
         context.user_data.pop("pending_extracted_laptops", None)
         cancel_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 ارسال فایل اکسل (.xlsx / .csv)", callback_data="adm_upload_laptop_excel")],
             [InlineKeyboardButton("🔙 انصراف و بازگشت به پنل", callback_data="adm_cancel_laptops")]
         ])
         msg = (
@@ -1513,12 +1519,16 @@ def main():
 
     async def post_init(application: Application):
         await db.init()
-        logger.info("✅ دیتابیس آماده شد.")
+        try:
+            me = await application.bot.get_me()
+            logger.info(f"🚀 ربات تلگرام @{me.username} با موفقیت به سرورهای تلگرام متصل و آنلاین شد.")
+        except Exception:
+            logger.info("🚀 ربات تلگرام با موفقیت متصل و فعال شد.")
         try:
             chat = await application.bot.get_chat(PHOTOS_CHANNEL)
-            logger.info(f"✅ [CHANNEL] Connected to {chat.title} ({PHOTOS_CHANNEL})")
+            logger.info(f"📸 کانال آلبوم تصاویر: {chat.title} ({PHOTOS_CHANNEL}) متصل شد.")
         except Exception as e:
-            logger.warning(f"⚠️ [CHANNEL] Status: {e}")
+            logger.warning(f"⚠️ کانال تصاویر ({PHOTOS_CHANNEL}): {e}")
 
     app.post_init = post_init
     app.run_polling(drop_pending_updates=True)
