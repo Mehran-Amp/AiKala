@@ -14,7 +14,7 @@ import db_bridge
 
 def start_background_scheduler():
     def worker():
-        print("🚀 سرویس زمان‌بندی خودکار فعال شد.")
+        print("🚀 [SCHEDULER] Automated background scheduler started.")
         # بررسی اولیه قیمت‌ها
         sync_prices.update_live_prices()
         
@@ -24,18 +24,18 @@ def start_background_scheduler():
             try:
                 # هر 2 ساعت (7200 ثانیه)
                 time.sleep(7200)
-                print("⏰ اجرای نوبت همگام‌سازی ۲ ساعته قیمت‌ها...")
+                print("⏰ [SCHEDULER] Running 2-hour live price synchronization...")
                 sync_prices.update_live_prices()
 
                 # هر 7 روز یک‌بار بازسازی درخت کاتالوگ
                 if time.time() - last_weekly_check >= 7 * 86400:
-                    print("📅 اجرای نوبت هفتگی بازسازی کاتالوگ و دسته‌بندی‌ها...")
+                    print("📅 [SCHEDULER] Running weekly catalog rebuild and categorization...")
                     sync_catalog.extract_products()
                     db_bridge.load_catalog_into_db()
                     last_weekly_check = time.time()
 
             except Exception as e:
-                print("خطا در زمان‌بند خودکار:", e)
+                print("❌ [SCHEDULER] Error in automated scheduler:", e)
                 time.sleep(60)
 
     t = threading.Thread(target=worker, daemon=True)

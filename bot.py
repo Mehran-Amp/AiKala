@@ -42,7 +42,8 @@ ADMIN_IDS = getattr(config, "ADMIN_IDS", [int(x) for x in os.getenv("ADMIN_IDS",
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-7s | [%(name)s] %(message)s",
-    datefmt="%H:%M:%S"
+    datefmt="%H:%M:%S",
+    stream=sys.stdout
 )
 logger = logging.getLogger("AiKalaBot")
 
@@ -1463,7 +1464,7 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
 # =====================================================================
 
 def main():
-    logger.info("🚀 ربات AiKala با ساختار ماژولار و بهینه آماده اجراست...")
+    logger.info("🚀 AiKala Bot is initialized and ready to run.")
 
     builder = Application.builder().token(TELEGRAM_BOT_TOKEN)
     try:
@@ -1521,14 +1522,14 @@ def main():
         await db.init()
         try:
             me = await application.bot.get_me()
-            logger.info(f"🚀 ربات تلگرام @{me.username} با موفقیت به سرورهای تلگرام متصل و آنلاین شد.")
+            logger.info(f"🚀 Telegram Bot @{me.username} is connected and online.")
         except Exception:
-            logger.info("🚀 ربات تلگرام با موفقیت متصل و فعال شد.")
+            logger.info("🚀 Telegram Bot is connected and online.")
         try:
             chat = await application.bot.get_chat(PHOTOS_CHANNEL)
-            logger.info(f"📸 کانال آلبوم تصاویر: {chat.title} ({PHOTOS_CHANNEL}) متصل شد.")
+            logger.info(f"📸 Image Channel: {chat.title} ({PHOTOS_CHANNEL}) connected.")
         except Exception as e:
-            logger.warning(f"⚠️ کانال تصاویر ({PHOTOS_CHANNEL}): {e}")
+            logger.warning(f"⚠️ Image Channel ({PHOTOS_CHANNEL}): {e}")
 
     app.post_init = post_init
     app.run_polling(drop_pending_updates=True)

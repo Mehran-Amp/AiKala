@@ -63,7 +63,7 @@ def extract_products():
     # =========================================================================
     # 1. تلویزیون (TV)
     # =========================================================================
-    print("در حال استخراج کاتالوگ تلویزیون...")
+    print("[CATALOG] Extracting TV catalog...")
     try:
         html_tv = fetch_html(BASE_URLS["tv"])
         tables = re.findall(r'<table[^>]*>(.*?)</table>', html_tv, re.DOTALL)
@@ -152,12 +152,12 @@ def extract_products():
                     categories_tree["tv"]["sizes"][size_str].append(pid)
 
     except Exception as e:
-        print("خطا در پردازش تلویزیون:", e)
+        print("[CATALOG] Error processing TV:", e)
 
     # =========================================================================
     # 2. کولر گازی (Air Conditioner)
     # =========================================================================
-    print("در حال استخراج کاتالوگ کولر گازی...")
+    print("[CATALOG] Extracting Air Conditioner catalog...")
     try:
         html_ac = fetch_html(BASE_URLS["conditioner"])
         tables = re.findall(r'<table[^>]*>(.*?)</table>', html_ac, re.DOTALL)
@@ -254,12 +254,12 @@ def extract_products():
                 categories_tree["conditioner"]["types"][ac_type].append(pid)
 
     except Exception as e:
-        print("خطا در پردازش کولر گازی:", e)
+        print("[CATALOG] Error processing Air Conditioner:", e)
 
     # =========================================================================
     # 3. یخچال و فریزر (Refrigerator)
     # =========================================================================
-    print("در حال استخراج کاتالوگ یخچال و فریزر...")
+    print("[CATALOG] Extracting Refrigerator catalog...")
     try:
         html_rf = fetch_html(BASE_URLS["refrigerator"])
         tables = re.findall(r'<table[^>]*>(.*?)</table>', html_rf, re.DOTALL)
@@ -341,12 +341,12 @@ def extract_products():
                 categories_tree["refrigerator"]["capacities"][foot_key].append(pid)
 
     except Exception as e:
-        print("خطا در پردازش یخچال:", e)
+        print("[CATALOG] Error processing Refrigerator:", e)
 
     # =========================================================================
     # 4. ماشین لباسشویی (Washing Machine)
     # =========================================================================
-    print("در حال استخراج کاتالوگ ماشین لباسشویی...")
+    print("[CATALOG] Extracting Washing Machine catalog...")
     try:
         html_wm = fetch_html(BASE_URLS["washing_machine"])
         tables = re.findall(r'<table[^>]*>(.*?)</table>', html_wm, re.DOTALL)
@@ -426,12 +426,12 @@ def extract_products():
                 categories_tree["washing_machine"]["plans"][plan].append(pid)
 
     except Exception as e:
-        print("خطا در پردازش لباسشویی:", e)
+        print("[CATALOG] Error processing Washing Machine:", e)
 
     # =========================================================================
     # 5. ماشین ظرفشویی (Dishwasher)
     # =========================================================================
-    print("در حال استخراج کاتالوگ ماشین ظرفشویی...")
+    print("[CATALOG] Extracting Dishwasher catalog...")
     try:
         html_dw = fetch_html(BASE_URLS["dishwasher"])
         tables = re.findall(r'<table[^>]*>(.*?)</table>', html_dw, re.DOTALL)
@@ -503,12 +503,12 @@ def extract_products():
                 categories_tree["dishwasher"]["baskets"][baskets].append(pid)
 
     except Exception as e:
-        print("خطا در پردازش ظرفشویی:", e)
+        print("[CATALOG] Error processing Dishwasher:", e)
 
     # =========================================================================
     # 6. لوازم ریز برقی (Small Appliances)
     # =========================================================================
-    print("در حال استخراج کاتالوگ لوازم ریز...")
+    print("[CATALOG] Extracting Small Appliances catalog...")
     try:
         html_sm = fetch_html(BASE_URLS["small_appliances"])
         # تجزیه آکاردئون‌ها بر اساس ساختار دقیق وردپرس
@@ -559,7 +559,7 @@ def extract_products():
                 categories_tree["small_appliances"]["subcategories"][sub_title].append(pid)
 
     except Exception as e:
-        print("خطا در پردازش لوازم ریز:", e)
+        print("[CATALOG] Error processing Small Appliances:", e)
 
     # ذخیره در فایل کاتالوگ و ساختار درختی
     with open("catalog_products.json", "w", encoding="utf-8") as f:
@@ -568,7 +568,7 @@ def extract_products():
     with open("categories_tree.json", "w", encoding="utf-8") as f:
         json.dump(categories_tree, f, ensure_ascii=False, indent=2)
 
-    print(f"\n✅ استخراج با موفقیت انجام شد: {len(catalog)} محصول دریافت و ذخیره شد.")
+    print(f"\n✅ [CATALOG] Extraction finished successfully: {len(catalog)} products saved.")
     return catalog, categories_tree
 
 if __name__ == "__main__":

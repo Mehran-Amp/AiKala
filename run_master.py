@@ -34,7 +34,8 @@ except ImportError:
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-7s | [MASTER] %(message)s",
-    datefmt="%H:%M:%S"
+    datefmt="%H:%M:%S",
+    stream=sys.stdout
 )
 logger = logging.getLogger("MasterRunner")
 
@@ -46,21 +47,21 @@ for _noisy in ("httpx", "httpcore", "urllib3"):
 CORE_SERVICES: List[Dict[str, Any]] = [
     {
         "id": "bot",
-        "name": "🤖 ربات تلگرام @AiKala_bot هوشمند کالا",
+        "name": "🤖 Telegram Bot (@AiKala_bot)",
         "script": "bot.py",
         "critical": True,
         "env_check": "TELEGRAM_BOT_TOKEN"
     },
     {
         "id": "scheduler",
-        "name": "⏰ سرویس زمان‌بندی خودکار قیمت‌ها و کاتالوگ",
+        "name": "⏰ Catalog & Price Scheduler Service",
         "script": "scheduler_service.py",
         "critical": False,
         "env_check": None
     },
     {
         "id": "monitor",
-        "name": "📡 مانیتور و پابلیشر خودکار کانال",
+        "name": "📡 Channel Media Monitor & Publisher",
         "script": "channel_monitor.py",
         "critical": False,
         "env_check": "TELEGRAM_API_ID"
@@ -73,7 +74,7 @@ SHUTDOWN_REQUESTED = False
 
 
 def check_preflight_syntax(scripts: List[str]) -> bool:
-    """بررسی سلامت نحوی کدهای پایتون قبل از شروع سرویس‌ها (به صورت خلاصه و تمیز)"""
+    """Pre-flight syntax validation of python core files."""
     modules_to_check = sorted(list(set(scripts + [
         "guidbuy.py", "support_service.py", "keyboards.py", "database.py",
         "order_flow.py", "photo_service.py", "order_tracking.py",
@@ -88,14 +89,14 @@ def check_preflight_syntax(scripts: List[str]) -> bool:
         try:
             py_compile.compile(mod, doraise=True)
         except py_compile.PyCompileError as e:
-            logger.error(f"   ✗ خطای نحوی در فایل {mod}: {e}")
+            logger.error(f"   ✗ Syntax error in file {mod}: {e}")
             failed.append(mod)
 
     if failed:
-        logger.error(f"❌ {len(failed)} ماژول دارای خطای نحوی هستند. توقف اجرا.")
+        logger.error(f"❌ {len(failed)} module(s) failed syntax validation. Aborting launch.")
         return False
 
-    logger.info(f"✅ بررسی سلامت ماژول‌ها: تمامی {len(modules_to_check)} ماژول پروژه تایید شدند (Syntax OK).")
+    logger.info(f"✅ Pre-flight syntax check: All {len(modules_to_check)} core modules verified (Syntax OK).")
     return True
 
 
@@ -171,10 +172,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="AiKala Master Runner - Supervised multi-service manager for @AiKala_bot"
     )
-    parser.add_argument("--bot-only", action="store_true", help="فقط ربات تلگرام را اجرا کن")
-    parser.add_argument("--monitor-only", action="store_true", help="فقط مانیتور کانال را اجرا کن")
-    parser.add_argument("--no-restart", action="store_true", help="عدم راه‌اندازی مجدد خودکار در صورت خروج")
-    parser.add_argument("--check", action="store_true", help="فقط بررسی سلامت فایل‌ها و خروج")
+    parser.add_argument("--bot-only", action="store_true", help="Run Telegram bot only")
+    parser.add_argument("--monitor-only", action="store_true", help="Run channel monitor only")
+    parser.add_argument("--no-restart", action="store_true", help="Do not auto-restart exited processes")
+    parser.add_argument("--check", action="store_true", help="Perform pre-flight syntax check and exit")
     args = parser.parse_args()
 
     # انتخاب سرویس‌های هدف
@@ -187,21 +188,21 @@ def main():
         selected_services = CORE_SERVICES
 
     # چاپ بنر آغازین جمع‌وجور و حرفه‌ای
-    sep = "━" * 56
+    sep = "━" * 60
     print(f"\n{sep}")
-    print("🚀 سامانه مدیریت یکپارچه ربات آی‌کالا (AiKala Master Runner)")
-    print(f"⏱ زمان شروع: {datetime.now().strftime('%Y/%m/%d - %H:%M:%S')}")
-    print("🛡 فیلتر لاگ: درخواست‌های تکراری شبکه (api.telegram.org) خلاصه و مهار شدند.")
+    print("🚀 AiKala Master Runner - Unified Process Supervisor")
+    print(f"⏱ Started At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("🛡 Log Filter: Suppressed noisy network/polling requests (api.telegram.org)")
     print(f"{sep}")
 
     # تست اولیه سلامت سینتکس
     scripts_to_check = [s["script"] for s in selected_services]
     if not check_preflight_syntax(scripts_to_check):
-        logger.error("❌ توقف اجرا به دلیل وجود خطای نحوی.")
+        logger.error("❌ Launch aborted due to syntax errors.")
         sys.exit(1)
 
     if args.check:
-        logger.info("✅ تست سلامت کلیه ماژول‌ها با موفقیت کامل انجام شد.")
+        logger.info("✅ All pre-flight checks completed successfully.")
         sys.exit(0)
 
     # ثبت سیگنال‌های سیستمی
@@ -213,14 +214,14 @@ def main():
     # بررسی متغیرهای محیطی با هشدارهای آموزنده
     bot_token = getattr(config, "TELEGRAM_BOT_TOKEN", os.getenv("TELEGRAM_BOT_TOKEN", ""))
     if not bot_token and not args.monitor_only:
-        logger.warning("⚠️ متغیر TELEGRAM_BOT_TOKEN تنظیم نشده است! ربات منتظر توکن خواهد ماند.")
+        logger.warning("⚠️ TELEGRAM_BOT_TOKEN is not configured! bot.py will wait for credentials.")
 
     tele_api_id = getattr(config, "TELEGRAM_API_ID", os.getenv("TELEGRAM_API_ID", ""))
     if not tele_api_id and not args.bot_only:
-        logger.info("ℹ️ متغیر TELEGRAM_API_ID موجود نیست (مانیتور کانال غیرفعال خواهد بود).")
+        logger.info("ℹ️ TELEGRAM_API_ID is not configured (channel monitor idle).")
 
     # راه‌اندازی اولیه سرویس‌ها
-    logger.info("🌟 راه‌اندازی سرویس‌های برگزیده:")
+    logger.info("🌟 Bootstrapping selected services:")
     for s in selected_services:
         p = start_process(s["script"])
         worker_state = {
@@ -236,8 +237,8 @@ def main():
         time.sleep(1.0)
 
     print(f"{sep}")
-    logger.info("✅ سرویس‌ها تحت نظارت ناظر هوشمند (Watchdog) فعال هستند.")
-    logger.info("💡 جهت خروج ایمن کلید Ctrl+C را فشار دهید.\n")
+    logger.info("✅ All services are ACTIVE and monitored by Master Watchdog.")
+    logger.info("💡 Press Ctrl+C at any time to gracefully terminate all processes.\n")
 
     last_heartbeat = time.time()
     heartbeat_interval = 1800  # هر ۳۰ دقیقه گزارش وضعیت کامل

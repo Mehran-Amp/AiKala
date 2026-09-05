@@ -81,7 +81,7 @@ def save_sync_info(updated_count: int = 0, total_items: int = 0):
         with open(SYNC_INFO_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print("خطا در ذخیره رکورد زمان بروزرسانی:", e)
+        print("[SYNC] Error saving sync timestamp record:", e)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -89,11 +89,11 @@ HEADERS = {
 
 def update_live_prices():
     """
-    دریافت فایل کم‌حجم JSON زنده و به‌روزرسانی آنی قیمت و وضعیت در:
-    1. فایل کاتالوگ پایه (catalog_products.json)
-    2. دیتابیس SQLite ربات
+    Fetch lightweight live JSON and update prices/status in:
+    1. Base catalog JSON (catalog_products.json)
+    2. SQLite database
     """
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] شروع بررسی قیمت‌های زنده...")
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SYNC] Checking live prices...")
     
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -104,12 +104,12 @@ def update_live_prices():
         with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
             live_data = json.loads(resp.read().decode('utf-8', errors='ignore'))
     except Exception as e:
-        print("خطا در دریافت فایل قیمت زنده:", e)
+        print("[SYNC] Error fetching live price feed:", e)
         return False
 
     items = live_data.get("i", {})
     if not items:
-        print("هیچ آیتمی در فایل قیمت لایو یافت نشد.")
+        print("[SYNC] No items found in live price feed.")
         return False
 
     # 1. به‌روزرسانی فایل کاتالوگ در صورت وجود
@@ -119,7 +119,7 @@ def update_live_prices():
             with open(CATALOG_FILE, "r", encoding="utf-8") as f:
                 catalog = json.load(f)
         except Exception as e:
-            print("خطا در خواندن فایل کاتالوگ:", e)
+            print("[SYNC] Error reading catalog file:", e)
 
     updated_count = 0
     for pid, live_info in items.items():
@@ -137,9 +137,9 @@ def update_live_prices():
     if updated_count > 0 and catalog:
         with open(CATALOG_FILE, "w", encoding="utf-8") as f:
             json.dump(catalog, f, ensure_ascii=False, indent=2)
-        print(f"✅ قیمت و وضعیت {updated_count} محصول در کاتالوگ به‌روزرسانی شد.")
+        print(f"✅ [SYNC] Updated {updated_count} products in catalog file.")
     else:
-        print("اطلاعات کاتالوگ از قبل به‌روز بود.")
+        print("[SYNC] Catalog prices are already up to date.")
 
     # 2. همگام‌سازی با دیتابیس ربات (در صورت وجود جدول products)
     try:
@@ -161,10 +161,10 @@ def update_live_prices():
                     db_updates += cursor.rowcount
             conn.commit()
             if db_updates > 0:
-                print(f"✅ قیمت‌های دیتابیس ربات نیز برای {db_updates} ردیف آپدیت شدند.")
+                print(f"✅ [SYNC] Synchronized {db_updates} rows in SQLite database.")
         conn.close()
     except Exception as e:
-        print("اطلاع دیتابیس:", e)
+        print("[SYNC] Database sync note:", e)
 
     save_sync_info(updated_count=updated_count, total_items=len(items))
     return True
