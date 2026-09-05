@@ -6,6 +6,7 @@ AiKala - Admin Panel & Photo Management Controller (admin_panel.py)
 """
 
 import os
+import re
 import time
 import logging
 import asyncio
@@ -146,18 +147,55 @@ async def admin_laptop_hub(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💻 <b>مرکز استخراج هوشمند و ثبت کاتالوگ لپ‌تاپ</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"▫️ تعداد لپ‌تاپ‌های فعال در فروشگاه: <b>{laptop_count} مدل</b>\n"
-        f"▫️ موتور استخراج: <b>هوش مصنوعی بینایی ماشین Gemini + تحلیل‌گر جدول</b>\n"
+        f"▫️ موتور استخراج: <b>تحلیل‌گر پیشرفته اکسل + هوش مصنوعی بینایی ماشین</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"روش ورود اطلاعات مورد نظر خود را انتخاب فرمایید:\n"
+        f"📊 <b>ارسال فایل اکسل:</b> آپلود فایل جدول (.xlsx / .csv) به صورت مستقیم\n"
         f"📸 <b>ارسال عکس:</b> اسکرین‌شات یا عکس جدول چاپی/دیجیتال\n"
         f"📋 <b>کپی متن:</b> پیست کردن مستقیم متن جدول اکسل یا پیام تلگرامی"
     )
 
     kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 ارسال فایل اکسل (.xlsx / .csv)", callback_data="adm_upload_laptop_excel")],
         [InlineKeyboardButton("📸 ارسال عکس یا اسکرین‌شات جدول", callback_data="adm_upload_laptop_photo")],
         [InlineKeyboardButton("📋 کپی و ارسال مستقیم متن جدول", callback_data="adm_text_laptop_prompt")],
         [InlineKeyboardButton("🗑 پاکسازی لیست لپ‌تاپ‌ها", callback_data="adm_clear_laptops_ask")],
         [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+async def admin_upload_laptop_excel_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """راهنمای آپلود مستقیم فایل اکسل کاتالوگ لپ‌تاپ"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    context.user_data["awaiting_laptop_photo"] = True
+    context.user_data["awaiting_laptop_excel"] = True
+    context.user_data.pop("pending_extracted_laptops", None)
+
+    text = (
+        "📊 <b>آپلود فایل اکسل لیست قیمت و موجودی لپ‌تاپ:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "لطفاً فایل اکسل خود با پسوند <b>.xlsx</b> یا <b>.csv</b> را به صورت فایل در همین چت ارسال (Upload) فرمایید.\n\n"
+        "✨ <b>قابلیت‌های هوشمند سیستم استخراج اکسل:</b>\n"
+        "▫️ پشتیبانی از تمام نسخه‌ها و شیت‌های اکسل (.xlsx و .csv)\n"
+        "▫️ تشخیص خودکار ستون‌ها (کد، برند، مدل، پردازنده، رم، هارد، گرافیک، صفحه نمایش، گرید، قیمت)\n"
+        "🚫 <b>فیلتر قطعی قیمت همکار</b> (ستون‌های همکاری و عمده به هیچ عنوان ثبت یا نمایش داده نمی‌شوند)\n"
+        "🚫 <b>فیلتر خودکار اطلاعات تماس و تبلیغات</b>\n"
+        "▫️ پیش‌نمایش سطرهای استخراج‌شده قبل از تایید نهایی و ثبت در فروشگاه\n\n"
+        "👇 <i>همین حالا فایل اکسل را ارسال فرمایید (یا برای انصراف کلمه لغو را بفرستید):</i>"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 انصراف و بازگشت", callback_data="adm_laptop_hub")]
     ])
 
     if update.callback_query:

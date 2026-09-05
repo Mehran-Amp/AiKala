@@ -110,12 +110,13 @@ async def start_order_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 total_price = 0
 
-    # محاسبه ۸٪ بیعانه رند شده به عنوان پیش‌پرداخت
+    # محاسبه بیعانه رند شده به عنوان پیش‌پرداخت بر اساس درصد تنظیم‌شده
     deposit = 0
     if total_price > 0:
-        deposit = int(round((total_price * 0.08) / 10000)) * 10000
+        dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
+        deposit = int(round((total_price * (dep_pct / 100.0)) / 10000)) * 10000
         if deposit == 0:
-            deposit = int(round((total_price * 0.08) / 1000)) * 1000
+            deposit = int(round((total_price * (dep_pct / 100.0)) / 1000)) * 1000
 
     context.user_data["order_total_price"] = total_price
     context.user_data["order_deposit"] = deposit

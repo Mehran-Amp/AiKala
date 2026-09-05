@@ -51,6 +51,7 @@ from search_engine import JSON_PRODUCTS, search_products, _normalize_digits, loa
 from laptop_extractor import (
     extract_laptops_from_image,
     extract_laptops_from_text,
+    extract_laptops_from_excel,
     set_gemini_api_key,
     merge_extracted_laptops,
     format_laptops_preview_for_admin,
@@ -97,6 +98,7 @@ from order_flow import (
 from admin_panel import (
     admin_panel_command,
     admin_laptop_hub,
+    admin_upload_laptop_excel_prompt,
     admin_text_laptop_prompt,
     admin_clear_laptops_ask,
     admin_clear_laptops_do,
@@ -210,15 +212,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if handled:
             return
 
-    # پردازش دریافت عکس لیست قیمت لپ‌تاپ توسط ادمین
-    if adm and (context.user_data.get("awaiting_laptop_photo") or (update.message.photo and context.user_data.get("awaiting_laptop_photo"))):
+    # پردازش دریافت عکس، فایل اکسل یا متن کاتالوگ لپ‌تاپ توسط ادمین
+    if adm and (
+        context.user_data.get("awaiting_laptop_photo")
+        or context.user_data.get("awaiting_laptop_excel")
+        or (update.message.photo and (context.user_data.get("awaiting_laptop_photo") or context.user_data.get("awaiting_laptop_excel")))
+        or (update.message.document and (context.user_data.get("awaiting_laptop_photo") or context.user_data.get("awaiting_laptop_excel")))
+    ):
         photo = update.message.photo[-1] if update.message.photo else None
-        doc = update.message.document if (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith("image/")) else None
+        doc = update.message.document
 
+        # تشخیص فایل اکسل یا CSV
+        is_excel = False
+        if doc:
+            d_name = (doc.file_name or "").lower()
+            d_mime = (doc.mime_type or "").lower()
+            if (
+                d_name.endswith(".xlsx")
+                or d_name.endswith(".xls")
+                or d_name.endswith(".csv")
+                or d_name.endswith(".tsv")
+                or "spreadsheet" in d_mime
+                or "excel" in d_mime
+                or "csv" in d_mime
+            ):
+                is_excel = True
+
+        is_image_doc = bool(doc and doc.mime_type and doc.mime_type.startswith("image/"))
         text_input = update.message.text.strip() if update.message.text else ""
-        if not photo and not doc:
+
+        if not photo and not is_image_doc and not is_excel:
             if text_input in ["انصراف", "لغو", "بازگشت"]:
                 context.user_data.pop("awaiting_laptop_photo", None)
+                context.user_data.pop("awaiting_laptop_excel", None)
                 await update.message.reply_text("❌ عملیات استخراج لپ‌تاپ لغو شد.")
                 return
 
@@ -227,6 +253,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if text_extracted:
                 context.user_data["pending_extracted_laptops"] = text_extracted
                 context.user_data.pop("awaiting_laptop_photo", None)
+                context.user_data.pop("awaiting_laptop_excel", None)
                 preview_text = format_laptops_preview_for_admin(text_extracted, max_display=10)
                 confirm_kb = InlineKeyboardMarkup([
                     [
@@ -243,13 +270,64 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             await update.message.reply_text(
-                "📸 لطفاً <b>عکس یا اسکرین‌شات جدول قیمت لپ‌تاپ</b> را ارسال فرمایید.\n"
+                "📊 لطفاً <b>فایل اکسل (.xlsx / .csv)</b> یا <b>عکس و اسکرین‌شات جدول</b> را ارسال فرمایید.\n"
                 "<i>(همچنین می‌توانید متن کپی‌شده از اکسل یا تلگرام را مستقیماً پیست نمایید)</i>\n"
                 "برای انصراف کلمه <code>لغو</code> را ارسال فرمایید.",
                 parse_mode="HTML"
             )
             return
 
+        # ─── سناریوی اول: دریافت فایل اکسل (.xlsx / .csv) ───
+        if is_excel:
+            file_title = doc.file_name or "فایل اکسل"
+            status_msg = await update.message.reply_text(
+                f"⏳ <b>در حال خواندن و تحلیل هوشمند فایل اکسل «{file_title}»...</b>\n"
+                f"▫️ پردازش سطرها و ستون‌های جدول بدون نیاز به کتابخانه‌های خارجی\n"
+                f"🛡 حذف قطعی ستون قیمت همکاری، اطلاعات تماس و تبلیغات\n"
+                f"<i>لطفاً چند لحظه شکیبا باشید...</i>",
+                parse_mode="HTML"
+            )
+            try:
+                file_obj = await doc.get_file()
+                file_bytes = await file_obj.download_as_bytearray()
+
+                extracted = extract_laptops_from_excel(bytes(file_bytes), filename=doc.file_name or "")
+                if not extracted:
+                    await status_msg.edit_text(
+                        "⚠️ متأسفانه هیچ سطری با مشخصات و قیمت معتبر در این فایل اکسل شناسایی نشد.\n"
+                        "لطفاً ساختار جدول و نام ستون‌ها (مدل/مشخصات، قیمت) را بررسی فرمایید.",
+                        parse_mode="HTML"
+                    )
+                    return
+
+                context.user_data["pending_extracted_laptops"] = extracted
+                context.user_data.pop("awaiting_laptop_photo", None)
+                context.user_data.pop("awaiting_laptop_excel", None)
+
+                preview_text = format_laptops_preview_for_admin(extracted, max_display=10)
+                confirm_kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(f"✅ تایید و ثبت {len(extracted)} لپ‌تاپ در فروشگاه", callback_data="adm_confirm_laptops"),
+                        InlineKeyboardButton("❌ انصراف", callback_data="adm_cancel_laptops")
+                    ],
+                    [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+                ])
+                await status_msg.edit_text(
+                    f"📊 <b>استخراج موفقیت‌آمیز از فایل اکسل ({file_title}):</b>\n\n{preview_text}",
+                    reply_markup=confirm_kb,
+                    parse_mode="HTML"
+                )
+                return
+            except Exception as err:
+                logger.error(f"Error processing excel file: {err}")
+                await status_msg.edit_text(
+                    f"❌ <b>خطا در خواندن فایل اکسل:</b>\n<code>{str(err)}</code>\n\n"
+                    f"💡 لطفاً مطمئن شوید فایل دارای فرمت معتبر .xlsx یا .csv است.",
+                    parse_mode="HTML"
+                )
+                return
+
+        # ─── سناریوی دوم: دریافت عکس جدول با هوش مصنوعی بینایی ماشین ───
         status_msg = await update.message.reply_text(
             "⏳ <b>در حال تحلیل هوشمند تصویر جدول با هوش مصنوعی بینایی ماشین Gemini...</b>\n"
             "▫️ مشخصات فنی سطر به سطر در حال استخراج هستند.\n"
@@ -345,19 +423,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     total_price = 0
 
+        dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
         if total_price < 10000:
             context.user_data["admin_answering_inquiry_id"] = req_id
             await update.message.reply_text(
                 "❌ لطفاً <b>فقط مبلغ قیمت تمام‌شده کالا را به عدد (تومان)</b> وارد و ارسال فرمایید:\n"
-                "<i>(این مبلغ مبنای اصلی سفارش، صدور فاکتور و محاسبه خودکار ۸٪ بیعانه قرار می‌گیرد - مثال: ۳۸,۵۰۰,۰۰۰ یا 38500000)</i>",
+                f"<i>(این مبلغ مبنای اصلی سفارش، صدور فاکتور و محاسبه خودکار {dep_pct}٪ بیعانه قرار می‌گیرد - مثال: ۳۸,۵۰۰,۰۰۰ یا 38500000)</i>",
                 parse_mode="HTML"
             )
             return
 
-        # محاسبه ۸٪ بیعانه رند شده به نزدیک‌ترین ۱۰ هزار تومان
-        deposit_amount = int(round((total_price * 0.08) / 10000)) * 10000
+        # محاسبه بیعانه رند شده به نزدیک‌ترین ۱۰ هزار تومان بر اساس درصد تنظیم شده
+        deposit_amount = int(round((total_price * (dep_pct / 100.0)) / 10000)) * 10000
         if deposit_amount == 0:
-            deposit_amount = int(round((total_price * 0.08) / 1000)) * 1000
+            deposit_amount = int(round((total_price * (dep_pct / 100.0)) / 1000)) * 1000
         remaining_amount = max(0, total_price - deposit_amount)
 
         # ثبت قیمت تمام شده در دیتابیس به عنوان مبنای قطعی
@@ -374,7 +453,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"💰 <b>قیمت قطعی روز با احتساب هزینه ارسال درب منزل:</b>\n"
             f"<b>{f_total_price} تومان</b>\n\n"
-            f"💳 <b>مبلغ بیعانه ۸٪ محاسبه‌شده:</b>\n"
+            f"💳 <b>مبلغ بیعانه {dep_pct}٪ محاسبه‌شده:</b>\n"
             f"<b>{f_deposit} تومان</b>\n\n"
             f"▫️ <b>مانده تسویه در محل:</b> <b>{f_remaining} تومان</b>",
             parse_mode="HTML"
@@ -390,7 +469,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"💰 <b>قیمت قطعی روز با احتساب هزینه ارسال درب منزل:</b>\n"
             f"<b>{f_total_price} تومان</b>\n\n"
-            f"💳 <b>مبلغ بیعانه جهت ثبت سفارش و ارسال (۸٪):</b>\n"
+            f"💳 <b>مبلغ بیعانه جهت ثبت سفارش و ارسال ({dep_pct}٪):</b>\n"
             f"<b>{f_deposit} تومان</b>\n\n"
             f"▫️ <i>مانده تسویه پس از تحویل و تست سلامت کالا: {f_remaining} تومان</i>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1146,6 +1225,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "adm_broadcast_do":
         await admin_broadcast_do(update, context)
 
+    elif data == "adm_upload_laptop_excel":
+        await admin_upload_laptop_excel_prompt(update, context)
+
     elif data == "adm_upload_laptop_photo":
         await query.answer()
         context.user_data["awaiting_laptop_photo"] = True
@@ -1201,6 +1283,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "adm_cancel_laptops":
         await query.answer("عملیات لغو شد.")
         context.user_data.pop("awaiting_laptop_photo", None)
+        context.user_data.pop("awaiting_laptop_excel", None)
         context.user_data.pop("pending_extracted_laptops", None)
         await admin_panel_command(update, context)
 

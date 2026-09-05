@@ -151,6 +151,7 @@ def update_bank_settings(
         order_flow.CARD_HOLDER = CARD_HOLDER
         order_flow.CARD_SHABA = CARD_SHABA
         order_flow.SHABA_HTML = SHABA_HTML
+        order_flow.DEPOSIT_PERCENT = DEPOSIT_PERCENT
     except Exception:
         pass
 

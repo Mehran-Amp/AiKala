@@ -775,13 +775,14 @@ def build_invoice_data_from_order(order: dict, product: dict = None) -> dict:
     price = _clean_num(order.get('total_price')) or _clean_num(order.get('final_price')) or _clean_num(prod.get('price')) or _clean_num(order.get('price'))
     deposit = _clean_num(order.get('deposit_amount'))
 
+    dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
     if deposit == 0 and price > 0:
-        deposit = int(round((price * 0.08) / 10000)) * 10000
+        deposit = int(round((price * (dep_pct / 100.0)) / 10000)) * 10000
         if deposit == 0:
-            deposit = int(round((price * 0.08) / 1000)) * 1000
+            deposit = int(round((price * (dep_pct / 100.0)) / 1000)) * 1000
 
     if price == 0 and deposit > 0:
-        price = int(round((deposit / 0.08) / 10000)) * 10000
+        price = int(round((deposit / (dep_pct / 100.0)) / 10000)) * 10000
 
     remaining = max(0, price - deposit)
 
