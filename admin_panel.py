@@ -26,7 +26,7 @@ PHOTOS_CHANNEL = getattr(config, "PHOTOS_CHANNEL", getattr(config, "PHOTO_CHANNE
 
 from database import Database
 from keyboards import is_admin, make_safe_cb, resolve_safe_cb
-from sync_prices import get_last_price_sync_str, update_live_prices
+from sync_prices import get_last_price_sync_str, update_live_prices, get_sync_info_dict
 from photo_service import (
     VERIFIED_PRODUCT_PHOTOS,
     PENDING_IMAGE_REQUESTS,
@@ -328,20 +328,32 @@ async def admin_sync_live_prices(update: Update, context: ContextTypes.DEFAULT_T
     success = False
     try:
         success = update_live_prices()
+        # اطمینان مضاعف از بارگذاری مجدد کش جستجوی موتور فروشگاه
+        if success:
+            try:
+                from search_engine import load_json_products
+                load_json_products()
+            except Exception as e_reload:
+                logger.warning(f"Note reloading search engine in admin panel: {e_reload}")
     except Exception as e:
         logger.error(f"Error during live sync: {e}")
 
-    new_sync_time = get_last_price_sync_str()
+    sync_info = get_sync_info_dict()
+    new_sync_time = sync_info.get("persian_datetime") or get_last_price_sync_str()
+    updated_cnt = sync_info.get("updated_count", 0)
+    total_cnt = sync_info.get("total_items", 0)
 
     if success:
+        update_detail = f"▫️ تعداد کالاهای بروزرسانی‌شده: <b>{updated_cnt:,} کالا</b>\n" if updated_cnt > 0 else "▫️ کلیه قیمت‌ها از قبل کاملاً منطبق و بروز بودند.\n"
         result_text = (
             f"✅ <b>قیمت‌ها و وضعیت موجودی با موفقیت بروزرسانی شد!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏱ <b>آخرین بروزرسانی لیست قیمت محصولات:</b>\n"
+            f"{update_detail}"
+            f"⏱ <b>زمان ثبت آخرین بروزرسانی:</b>\n"
             f"📅 <code>{new_sync_time}</code>\n"
-            f"🌐 منبع: <b>داده‌های زنده ممتازکالا</b>\n"
+            f"🌐 منبع: <b>داده‌های زنده ممتازکالا ({total_cnt:,} قلم فعال)</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"✨ تمامی قیمت‌ها، تغییرات موجودی و تخفیفات کالاها در دیتابیس و کاتالوگ ربات اعمال گردید."
+            f"✨ تمامی قیمت‌ها و وضعیت موجودی در دیتابیس، کاتالوگ و حافظه جستجوی زنده ربات بلافاصله اعمال گردید."
         )
     else:
         result_text = (

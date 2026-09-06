@@ -87,11 +87,28 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
+def get_sync_info_dict() -> dict:
+    """دریافت اطلاعات کامل آخرین بروزرسانی قیمت‌ها"""
+    if os.path.exists(SYNC_INFO_FILE):
+        try:
+            with open(SYNC_INFO_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "persian_datetime": get_last_price_sync_str(),
+        "updated_count": 0,
+        "total_items": 0,
+        "source": "ممتاز کالا (زنده)"
+    }
+
 def update_live_prices():
     """
     Fetch lightweight live JSON and update prices/status in:
     1. Base catalog JSON (catalog_products.json)
-    2. SQLite database
+    2. Optional all products JSON (momtazkalla_all_products.json)
+    3. SQLite database (bot_data.db)
+    4. Active in-memory cache (search_engine.JSON_PRODUCTS) for immediate reflection
     """
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SYNC] Checking live prices...")
     
@@ -112,7 +129,7 @@ def update_live_prices():
         print("[SYNC] No items found in live price feed.")
         return False
 
-    # 1. به‌روزرسانی فایل کاتالوگ در صورت وجود
+    # 1. به‌روزرسانی فایل کاتالوگ اصلی (catalog_products.json)
     catalog = {}
     if os.path.exists(CATALOG_FILE):
         try:
@@ -123,7 +140,7 @@ def update_live_prices():
 
     updated_count = 0
     for pid, live_info in items.items():
-        # d: قیمت به تومان
+        # d: قیمت مصرف‌کننده به تومان
         # s: وضعیت (b: موجود، o: ناموجود، i: استعلام تلفنی)
         new_price = live_info.get("d", 0)
         new_status = live_info.get("s", "b")
@@ -132,30 +149,75 @@ def update_live_prices():
             if catalog[pid].get("price") != new_price or catalog[pid].get("status") != new_status:
                 catalog[pid]["price"] = new_price
                 catalog[pid]["status"] = new_status
+                catalog[pid]["price_formatted"] = f"{int(new_price):,} تومان" if new_price else "تماس بگیرید"
                 updated_count += 1
 
     if updated_count > 0 and catalog:
         with open(CATALOG_FILE, "w", encoding="utf-8") as f:
             json.dump(catalog, f, ensure_ascii=False, indent=2)
-        print(f"✅ [SYNC] Updated {updated_count} products in catalog file.")
+        print(f"✅ [SYNC] Updated {updated_count} products in {CATALOG_FILE}.")
     else:
-        print("[SYNC] Catalog prices are already up to date.")
+        print("[SYNC] Catalog file prices are already up to date.")
 
-    # 2. همگام‌سازی با دیتابیس ربات (در صورت وجود جدول products)
+    # 2. به‌روزرسانی فایل مکمل در صورت وجود (momtazkalla_all_products.json)
+    alt_file = "momtazkalla_all_products.json"
+    if os.path.exists(alt_file):
+        try:
+            with open(alt_file, "r", encoding="utf-8") as f:
+                all_prods = json.load(f)
+            alt_updated = 0
+            if isinstance(all_prods, list):
+                for p in all_prods:
+                    pid_str = str(p.get("product_id", "")).strip()
+                    # بررسی تطابق با ID یا تطابق مدل
+                    matching_info = items.get(pid_str)
+                    if not matching_info and pid_str in catalog:
+                        cat_item = catalog[pid_str]
+                        new_p = cat_item.get("price")
+                        if new_p and p.get("price") != str(new_p):
+                            p["price"] = str(new_p)
+                            p["price_raw"] = new_p
+                            alt_updated += 1
+                    elif matching_info:
+                        new_p = matching_info.get("d", 0)
+                        new_s = matching_info.get("s", "b")
+                        if new_p:
+                            p["price"] = str(new_p)
+                            p["price_raw"] = new_p
+                            p["status"] = new_s
+                            alt_updated += 1
+                if alt_updated > 0:
+                    with open(alt_file, "w", encoding="utf-8") as f:
+                        json.dump(all_prods, f, ensure_ascii=False, indent=2)
+                    print(f"✅ [SYNC] Updated {alt_updated} products in {alt_file}.")
+        except Exception as e:
+            print("[SYNC] Note updating alt catalog file:", e)
+
+    # 3. همگام‌سازی با دیتابیس ربات (SQLite) با بررسی ایمن ستون‌ها
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         
-        # بررسی وجود جدول
+        # بررسی وجود جدول products
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='products';")
         if cursor.fetchone():
+            # بررسی و افزودن خودکار ستون status در صورت عدم وجود
+            cursor.execute("PRAGMA table_info(products);")
+            existing_cols = [row[1] for row in cursor.fetchall()]
+            if "status" not in existing_cols:
+                try:
+                    cursor.execute("ALTER TABLE products ADD COLUMN status TEXT DEFAULT 'b';")
+                    conn.commit()
+                except Exception:
+                    pass
+
             db_updates = 0
             for pid, live_info in items.items():
                 p = live_info.get("d", 0)
                 s = live_info.get("s", "b")
                 cursor.execute(
-                    "UPDATE products SET price = ?, status = ? WHERE product_id = ? OR data_id = ?",
-                    (p, s, pid, pid)
+                    "UPDATE products SET price = ?, status = ? WHERE product_id = ?",
+                    (str(p), s, pid)
                 )
                 if cursor.rowcount > 0:
                     db_updates += cursor.rowcount
@@ -165,6 +227,14 @@ def update_live_prices():
         conn.close()
     except Exception as e:
         print("[SYNC] Database sync note:", e)
+
+    # 4. بارگذاری مجدد فوری کش حافظه جستجوی ربات (بسیار مهم: رفع عدم تغییر قیمت در نتایج جستجو)
+    try:
+        from search_engine import load_json_products
+        load_json_products()
+        print("✅ [SYNC] In-memory product cache (JSON_PRODUCTS) successfully reloaded.")
+    except Exception as e:
+        print("[SYNC] Note reloading in-memory search engine cache:", e)
 
     save_sync_info(updated_count=updated_count, total_items=len(items))
     return True
