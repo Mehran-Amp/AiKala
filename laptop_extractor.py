@@ -201,62 +201,111 @@ def to_eng_digits(s: Any) -> str:
     trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
     return str(s).translate(trans)
 
+def parse_cell_price(cell_val: Any) -> int:
+    """استخراج دقیق و بدون خطای عدد قیمت از سلول، با پشتیبانی از اعشار اکسل، نشانه‌گذاری علمی و جداکننده‌های هزارگان"""
+    if cell_val is None:
+        return 0
+    val_str = to_eng_digits(str(cell_val)).strip().replace(",", "").replace("،", "")
+    if not val_str:
+        return 0
+    # تلاش برای خواندن مستقیم عدد ممیزدار یا نماد علمی (مانند 25500000.0 یا 2.55E7)
+    try:
+        f_val = float(val_str)
+        if 1000 <= f_val <= 9000000000:
+            return int(round(f_val))
+    except Exception:
+        pass
+    p_digits = re.sub(r'[^\d]', '', val_str)
+    if p_digits:
+        try:
+            return int(p_digits)
+        except Exception:
+            pass
+    return 0
+
 def parse_xlsx_rows(file_bytes: bytes) -> List[List[str]]:
     """
     خواندن و استخراج سطرهای تمام شیت‌های فایل اکسل (.xlsx) با استفاده از کتابخانه استاندارد پایتون (zipfile + xml).
     کاملاً مستقل از پکیج‌های جانبی با عملکرد فوق‌العاده سریع و پایدار.
+    پشتیبانی کامل از شیت‌های چندگانه، تگ‌های درون‌خطی inlineStr، متن غنی، فرمول‌ها و اندیس‌های سلولی غایب.
     """
     all_rows = []
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+            name_list = z.namelist()
             # 1. خواندن جدول رشته‌های مشترک (Shared Strings)
             shared_strings = []
-            if "xl/sharedStrings.xml" in z.namelist():
-                ss_tree = ET.fromstring(z.read("xl/sharedStrings.xml"))
-                # ساپورت همزمان تگ‌های t معمولی و فرمت‌بندی run-level
-                for si in ss_tree.findall("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si"):
-                    text_parts = [t.text or "" for t in si.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t")]
-                    shared_strings.append("".join(text_parts))
+            ss_filename = next((n for n in name_list if n.lower() == "xl/sharedstrings.xml"), None)
+            if ss_filename:
+                try:
+                    ss_tree = ET.fromstring(z.read(ss_filename))
+                    for si in ss_tree.findall(".//{*}si"):
+                        text_parts = [t.text or "" for t in si.iter() if t.tag.endswith("t")]
+                        shared_strings.append("".join(text_parts))
+                except Exception as e_ss:
+                    logger.warning(f"Error parsing sharedStrings.xml: {e_ss}")
 
-            # 2. پیدا کردن تمام برگه‌های اکسل (Sheets)
-            sheet_files = [n for n in z.namelist() if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")]
+            # 2. پیدا کردن تمام برگه‌های اکسل (Worksheets)
+            sheet_files = [n for n in name_list if n.lower().startswith("xl/worksheets/") and n.lower().endswith(".xml")]
             sheet_files.sort()
 
             for sheet_file in sheet_files:
                 try:
                     sheet_tree = ET.fromstring(z.read(sheet_file))
-                    sheet_data = sheet_tree.find("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}sheetData")
+                    sheet_data = sheet_tree.find(".//{*}sheetData")
+                    if sheet_data is None:
+                        sheet_data = next((elem for elem in sheet_tree.iter() if elem.tag.endswith("sheetData")), None)
                     if sheet_data is None:
                         continue
 
-                    for row in sheet_data.findall("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row"):
+                    rows = sheet_data.findall(".//{*}row")
+                    if not rows:
+                        rows = [elem for elem in sheet_data.iter() if elem.tag.endswith("row")]
+
+                    for row in rows:
                         row_vals = {}
                         max_col_idx = 0
-                        for c in row.findall("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c"):
+                        current_col_idx = 0
+
+                        cells = row.findall(".//{*}c")
+                        if not cells:
+                            cells = [elem for elem in row if elem.tag.endswith("c")]
+
+                        for c in cells:
                             ref = c.get("r", "")
-                            col_letters = "".join([ch for ch in ref if ch.isalpha()])
-                            col_idx = 0
-                            for ch in col_letters:
-                                col_idx = col_idx * 26 + (ord(ch.upper()) - ord("A") + 1)
-                            col_idx = col_idx - 1 if col_idx > 0 else 0
+                            if ref:
+                                col_letters = "".join([ch for ch in ref if ch.isalpha()])
+                                col_idx = 0
+                                for ch in col_letters:
+                                    col_idx = col_idx * 26 + (ord(ch.upper()) - ord("A") + 1)
+                                col_idx = col_idx - 1 if col_idx > 0 else 0
+                                current_col_idx = col_idx
+                            else:
+                                col_idx = current_col_idx
+
+                            current_col_idx += 1
                             max_col_idx = max(max_col_idx, col_idx)
 
-                            t_type = c.get("t")
-                            v = c.find("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v")
+                            t_type = c.get("t", "")
                             val = ""
+                            v = next((elem for elem in c if elem.tag.endswith("v")), None)
+
                             if t_type == "s" and v is not None and v.text is not None:
                                 try:
-                                    idx = int(v.text)
+                                    idx = int(v.text.strip())
                                     if 0 <= idx < len(shared_strings):
                                         val = shared_strings[idx]
                                 except Exception:
                                     pass
-                            elif t_type == "inlineStr":
-                                t_tag = c.find("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}is/{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t")
-                                if t_tag is not None and t_tag.text:
-                                    val = t_tag.text
+                            elif t_type == "inlineStr" or any(elem.tag.endswith("is") for elem in c):
+                                text_parts = [elem.text or "" for elem in c.iter() if elem.tag.endswith("t")]
+                                val = "".join(text_parts)
                             elif v is not None and v.text:
                                 val = v.text
+                            else:
+                                t_tag = next((elem for elem in c if elem.tag.endswith("t")), None)
+                                if t_tag is not None and t_tag.text:
+                                    val = t_tag.text
 
                             row_vals[col_idx] = val.strip()
 
@@ -375,15 +424,15 @@ def extract_laptops_from_table_rows(rows: List[List[str]]) -> List[Dict[str, Any
                 # فیلتر اکید ستون همکار
                 if any(x in c_name for x in ["همکار", "همکاری", "عمده", "coop", "wholesale", "colleague"]):
                     col_map["ignore_colleague"] = c_idx
-                elif any(x in c_name for x in ["قیمت تک", "مصرف کننده", "تک فروشی", "retail", "user", "فروش"]):
+                elif any(x in c_name for x in ["قیمت تک", "مصرف کننده", "تک فروشی", "retail", "user", "فروش", "فی تک"]):
                     col_map["price"] = c_idx
-                elif any(x in c_name for x in ["قیمت", "price"]) and "price" not in col_map:
+                elif any(x in c_name for x in ["قیمت", "price", "مبلغ", "فی", "نرخ"]) and "price" not in col_map:
                     col_map["price"] = c_idx
                 elif any(x in c_name for x in ["کد", "ردیف", "code", "no", "id", "شناسه"]) and "code" not in col_map:
                     col_map["code"] = c_idx
                 elif any(x in c_name for x in ["برند", "مارک", "brand", "make"]) and "brand" not in col_map:
                     col_map["brand"] = c_idx
-                elif any(x in c_name for x in ["مدل", "دستگاه", "model", "لپتاپ", "لپ تاپ", "مشخصات", "title"]) and "model" not in col_map:
+                elif any(x in c_name for x in ["مدل", "دستگاه", "model", "لپتاپ", "لپ تاپ", "مشخصات", "title", "نام کالا"]) and "model" not in col_map:
                     col_map["model"] = c_idx
                 elif any(x in c_name for x in ["پردازنده", "سی پی یو", "cpu", "processor"]) and "cpu" not in col_map:
                     col_map["cpu"] = c_idx
@@ -424,24 +473,15 @@ def extract_laptops_from_table_rows(rows: List[List[str]]) -> List[Dict[str, Any
 
         # ۱. استخراج قیمت مصرف‌کننده (با نادیده گرفتن ستون همکار)
         if "price" in col_map and col_map["price"] < len(row):
-            price_raw = to_eng_digits(row[col_map["price"]])
-            p_digits = re.sub(r'[^\d]', '', price_raw)
-            if p_digits:
-                price = int(p_digits)
+            price = parse_cell_price(row[col_map["price"]])
         else:
             candidate_prices = []
             for c_idx, cell in enumerate(row):
                 if c_idx == col_map.get("ignore_colleague"):
                     continue
-                c_str = to_eng_digits(cell).strip()
-                p_digits = re.sub(r'[^\d]', '', c_str)
-                if p_digits:
-                    try:
-                        val = int(p_digits)
-                        if 1000 <= val <= 900000000:
-                            candidate_prices.append(val)
-                    except Exception:
-                        pass
+                p_val = parse_cell_price(cell)
+                if 1000 <= p_val <= 9000000000:
+                    candidate_prices.append(p_val)
             if candidate_prices:
                 price = max(candidate_prices)
 
@@ -451,6 +491,9 @@ def extract_laptops_from_table_rows(rows: List[List[str]]) -> List[Dict[str, Any
         # تبدیل مبالغ هزار تومان به تومان کامل
         if price < 1000000:
             price = price * 1000
+        elif price >= 500000000 and price % 10 == 0:
+            # تبدیل مبالغ ریال (بیش از ۵۰۰ میلیون ریال) به تومان
+            price = price // 10
 
         # ۲. کد کالا
         if "code" in col_map and col_map["code"] < len(row):

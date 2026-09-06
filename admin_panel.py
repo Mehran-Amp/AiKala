@@ -53,6 +53,13 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     """داشبورد اصلی و بهینه‌سازی‌شده مدیریت فروشگاه هوشمند آاگ کالا"""
     user = update.effective_user
     if not is_admin(user.id):
+        if update.message:
+            await update.message.reply_text(
+                f"⛔️ <b>دسترسی محدود به مدیریت فروشگاه</b>\n\n"
+                f"شناسه کاربری شما: <code>{user.id}</code>\n"
+                f"جهت دسترسی به پنل مدیریت، این شناسه را در متغیر <code>ADMIN_IDS</code> در سرور اضافه فرمایید.",
+                parse_mode="HTML"
+            )
         return
 
     # پاکسازی وضعیت‌های موقت احتمالی ادمین

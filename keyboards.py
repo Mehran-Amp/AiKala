@@ -94,8 +94,37 @@ def resolve_safe_cb(cb_data: str) -> str:
         return rest
     return cb_data
 
+ADMIN_IDS_FILE = "admin_ids.json"
+
+def get_all_admin_ids() -> set:
+    """دریافت لیست تمام شناسه‌های ادمین از متغیرهای پیکربندی و فایل محلی ذخیره ادمین‌ها"""
+    ids = set(int(x) for x in ADMIN_IDS if str(x).isdigit())
+    if os.path.exists(ADMIN_IDS_FILE):
+        try:
+            with open(ADMIN_IDS_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+                if isinstance(saved, list):
+                    ids.update(int(x) for x in saved if str(x).isdigit())
+        except Exception:
+            pass
+    return ids
+
+def add_admin_id(user_id: int) -> bool:
+    """افزودن شناسه ادمین به صورت دائمی در فایل محلی"""
+    try:
+        current_ids = list(get_all_admin_ids())
+        if user_id not in current_ids:
+            current_ids.append(user_id)
+        with open(ADMIN_IDS_FILE, "w", encoding="utf-8") as f:
+            json.dump(current_ids, f, indent=2)
+        return True
+    except Exception:
+        return False
+
 def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+    if not user_id:
+        return False
+    return user_id in get_all_admin_ids()
 
 # ─── کیبوردهای منوی اصلی ───
 
