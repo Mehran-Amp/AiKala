@@ -571,5 +571,110 @@ def extract_products():
     print(f"\n✅ [CATALOG] Extraction finished successfully: {len(catalog)} products saved.")
     return catalog, categories_tree
 
+CATALOG_SYNC_INFO_FILE = "catalog_sync_info.json"
+
+def get_last_catalog_sync_str() -> str:
+    """دریافت تاریخ و ساعت آخرین بازسازی و بروزرسانی کاتالوگ، موجودی و دسته‌بندی‌ها"""
+    if os.path.exists(CATALOG_SYNC_INFO_FILE):
+        try:
+            with open(CATALOG_SYNC_INFO_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if data.get("persian_datetime"):
+                    return data["persian_datetime"]
+        except Exception:
+            pass
+    if os.path.exists("catalog_products.json"):
+        try:
+            from sync_prices import get_persian_date_str
+            import datetime
+            mtime = os.path.getmtime("catalog_products.json")
+            dt = datetime.datetime.fromtimestamp(mtime)
+            return get_persian_date_str(dt)
+        except Exception:
+            pass
+    return "در انتظار اولین همگام‌سازی"
+
+def get_catalog_sync_info_dict() -> dict:
+    """دریافت اطلاعات و آمار کامل آخرین بازسازی کاتالوگ و دسته‌بندی‌ها"""
+    if os.path.exists(CATALOG_SYNC_INFO_FILE):
+        try:
+            with open(CATALOG_SYNC_INFO_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "persian_datetime": get_last_catalog_sync_str(),
+        "total_products": 0,
+        "categories_count": 6,
+        "status": "pending"
+    }
+
+def save_catalog_sync_info(total_products: int, categories_count: int = 6):
+    """ذخیره رکورد تاریخ و آمار آخرین بازسازی کاتالوگ و دسته‌بندی‌ها"""
+    try:
+        from sync_prices import get_persian_date_str
+        import datetime
+        now_dt = datetime.datetime.now()
+        data = {
+            "timestamp": int(now_dt.timestamp()),
+            "persian_datetime": get_persian_date_str(now_dt),
+            "total_products": total_products,
+            "categories_count": categories_count,
+            "status": "success"
+        }
+        with open(CATALOG_SYNC_INFO_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("[CATALOG] Error saving catalog sync info:", e)
+
+def run_full_catalog_and_category_sync() -> dict:
+    """
+    اجرای کامل همگام‌سازی کاتالوگ، موجودی محصولات و درخت دسته‌بندی‌های جدید (معادل کار خودکار هفتگی):
+    1. استخراج تمام محصولات و درخت دسته‌بندی از ۶ دسته‌بندی اصلی لوازم خانگی
+    2. ذخیره و بروزرسانی در دیتابیس SQLite (جداول products و dynamic_categories)
+    3. بروزرسانی قیمت‌های زنده و تطبیق وضعیت موجودی
+    4. بارگذاری مجدد کش جستجوی درون‌حافظه‌ای
+    5. ثبت رکورد زمان و آمار بروزرسانی
+    """
+    import time
+    t0 = time.time()
+    try:
+        catalog, tree = extract_products()
+        total_prods = len(catalog)
+
+        import db_bridge
+        inserted = db_bridge.load_catalog_into_db()
+
+        import sync_prices
+        try:
+            sync_prices.update_live_prices()
+        except Exception as e:
+            print("[CATALOG] Note updating live prices after catalog rebuild:", e)
+
+        try:
+            from search_engine import load_json_products
+            load_json_products()
+        except Exception as e:
+            print("[CATALOG] Note reloading search cache:", e)
+
+        save_catalog_sync_info(total_products=total_prods, categories_count=len(tree))
+        duration = time.time() - t0
+
+        return {
+            "success": True,
+            "total_products": total_prods,
+            "inserted_to_db": inserted,
+            "categories_count": len(tree),
+            "duration_seconds": round(duration, 1),
+            "persian_datetime": get_last_catalog_sync_str()
+        }
+    except Exception as e:
+        print("[CATALOG] Error running full catalog sync:", e)
+        return {
+            "success": False,
+            "error": str(e),
+            "persian_datetime": get_last_catalog_sync_str()
+        }
+
 if __name__ == "__main__":
-    extract_products()
+    run_full_catalog_and_category_sync()

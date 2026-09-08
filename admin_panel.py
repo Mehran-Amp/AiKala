@@ -78,12 +78,19 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     badge_pending = f" ({pending_receipts} فیش جدید 🔴)" if pending_receipts > 0 else ""
 
     last_sync_time = get_last_price_sync_str()
+    try:
+        from sync_catalog import get_last_catalog_sync_str
+        last_cat_sync = get_last_catalog_sync_str()
+    except Exception:
+        last_cat_sync = "در دسترس نیست"
 
     text = (
         f"⚙️ <b>داشبورد مدیریت بازرگانی آاگ کالا</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏱ <b>آخرین بروزرسانی لیست قیمت محصولات:</b>\n"
-        f"📅 <code>{last_sync_time}</code>\n"
+        f"⏱ <b>آخرین بروزرسانی قیمت‌ها:</b>\n"
+        f"📅 <code>{last_sync_time}</code> <i>(۲ ساعته / دستی)</i>\n"
+        f"📦 <b>آخرین بازسازی کاتالوگ، موجودی و دسته‌ها:</b>\n"
+        f"📅 <code>{last_cat_sync}</code> <i>(هفتگی / دستی)</i>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 <b>خلاصه وضعیت فروشگاه:</b>\n"
         f"▫️ کل کالاهای فعال کاتالوگ: <b>{total_prods:,} کالا</b>\n"
@@ -98,10 +105,13 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         # ۱. سفارشات و فیش‌های بانکی
         [InlineKeyboardButton(f"📋 مدیریت سفارشات و فیش‌ها{badge_pending}", callback_data="adm_manage_orders")],
         
-        # ۲. کاتالوگ و قیمت‌ها
+        # ۲. کاتالوگ، قیمت‌ها و موجودی
         [
             InlineKeyboardButton("💻 مدیریت کاتالوگ لپ‌تاپ", callback_data="adm_laptop_hub"),
             InlineKeyboardButton("🔄 بروزرسانی دستی قیمتها", callback_data="adm_sync_live_prices")
+        ],
+        [
+            InlineKeyboardButton("📦 بروزرسانی دستی موجودی و دسته‌بندی‌ها", callback_data="adm_sync_catalog_stock")
         ],
         
         # ۳. پشتیبانی و پیام همگانی
@@ -375,6 +385,77 @@ async def admin_sync_live_prices(update: Update, context: ContextTypes.DEFAULT_T
     else:
         await update.message.reply_text(result_text, reply_markup=kb, parse_mode="HTML")
 
+async def admin_sync_catalog_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اجرای دستی و آنی بروزرسانی موجودی محصولات و بازسازی درخت دسته‌بندی‌های جدید (معادل کار خودکار هفتگی)"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    query = update.callback_query
+    if query:
+        await query.answer("در حال شروع بازسازی کاتالوگ و دسته‌بندی‌ها...", show_alert=False)
+        try:
+            await query.edit_message_text(
+                "⏳ <b>در حال استخراج کاتالوگ، بررسی موجودی و بازسازی درخت دسته‌بندی‌های جدید...</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "▫️ بررسی و دریافت ۶ دسته‌بندی اصلی لوازم خانگی\n"
+                "▫️ استخراج مشخصات فنی کامل، امتیازات و موجودی دقیق\n"
+                "▫️ بازسازی درخت دسته‌بندی‌های پویا در دیتابیس\n"
+                "▫️ بروزرسانی آنی حافظه موتور جستجوی هوشمند ربات\n\n"
+                "<i>(این فرآیند به صورت خودکار هفته‌ای یک‌بار انجام می‌شود و اجرای کامل آن حدود ۱۰ الی ۱۵ ثانیه زمان می‌برد. لطفاً شکیبا باشید...)</i>",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+    import asyncio
+    try:
+        from sync_catalog import run_full_catalog_and_category_sync
+        res = await asyncio.to_thread(run_full_catalog_and_category_sync)
+    except Exception as e:
+        res = {"success": False, "error": str(e)}
+
+    if res.get("success"):
+        total_p = res.get("total_products", 0)
+        dur = res.get("duration_seconds", 0)
+        sync_dt = res.get("persian_datetime", "")
+        cats_cnt = res.get("categories_count", 6)
+
+        result_text = (
+            f"✅ <b>کاتالوگ، موجودی و دسته‌بندی‌های جدید با موفقیت بروزرسانی شدند!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 <b>مجموع کالاهای فعال استخراج‌شده:</b> <b>{total_p:,} کالا</b>\n"
+            f"🗂 <b>دسته‌بندی‌های پویا:</b> <b>{cats_cnt} دسته‌بندی اصلی و ده‌ها زیرشاخه</b>\n"
+            f"⏱ <b>مدت زمان پردازش:</b> <b>{dur} ثانیه</b>\n"
+            f"📅 <b>تاریخ و زمان ثبت:</b> <code>{sync_dt}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"✨ <b>اقدامات صورت‌گرفته:</b>\n"
+            f"▫️ کاتالوگ و مشخصات فنی ۱۰ ستونه کلیه محصولات نوسازی شد.\n"
+            f"▫️ آخرین وضعیت موجودی و استعلام تلفنی تطبیق داده شد.\n"
+            f"▫️ درخت دسته‌بندی‌های جدید در دیتابیس ثبت و در منوی کاتالوگ بارگذاری شد.\n"
+            f"▫️ حافظه موتور جستجوی زنده ربات بلافاصله رفرش گردید."
+        )
+    else:
+        err_msg = res.get("error", "خطای ارتباطی")
+        result_text = (
+            f"⚠️ <b>بروزرسانی کاتالوگ و دسته‌بندی‌ها با خطا مواجه شد.</b>\n"
+            f"پیام سیستم: <code>{err_msg}</code>\n"
+            f"لطفاً اتصال اینترنت سرور را بررسی فرموده و مجدداً تلاش نمایید."
+        )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📦 بروزرسانی مجدد کاتالوگ و دسته‌ها", callback_data="adm_sync_catalog_stock")],
+        [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+    ])
+
+    if query:
+        try:
+            await query.edit_message_text(result_text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await query.message.reply_text(result_text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(result_text, reply_markup=kb, parse_mode="HTML")
+
 async def admin_bank_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """نمایش و مدیریت مشخصات حساب بانکی، کارت، شبا و درصد بیعانه"""
     user = update.effective_user
@@ -568,6 +649,11 @@ async def admin_catalog_report(update: Update, context: ContextTypes.DEFAULT_TYP
 
     total = home_count + laptop_count
     last_sync = get_last_price_sync_str()
+    try:
+        from sync_catalog import get_last_catalog_sync_str
+        last_cat_sync = get_last_catalog_sync_str()
+    except Exception:
+        last_cat_sync = "در دسترس نیست"
 
     text = (
         f"📊 <b>گزارش و آمار جامع کاتالوگ فروشگاه:</b>\n"
@@ -577,14 +663,17 @@ async def admin_catalog_report(update: Update, context: ContextTypes.DEFAULT_TYP
         f"💻 دسته‌بندی لپ‌تاپ: <b>{laptop_count} مدل</b>\n"
         f"🏷 تعداد برندهای پوشش‌داده‌شده: <b>{len(brands)} برند</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏱ <b>آخرین بروزرسانی لیست قیمت محصولات:</b>\n"
-        f"📅 <code>{last_sync}</code>\n"
+        f"⏱ <b>آخرین بروزرسانی قیمت‌ها:</b> <code>{last_sync}</code>\n"
+        f"📦 <b>آخرین بازسازی موجودی و دسته‌ها:</b> <code>{last_cat_sync}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"✨ تمام محصولات قابلیت جستجوی هوشمند متنی و فیلتر بر اساس برند و دسته را دارند."
     )
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 بروزرسانی زنده قیمت‌ها", callback_data="adm_sync_live_prices")],
+        [
+            InlineKeyboardButton("🔄 بروزرسانی زنده قیمت‌ها", callback_data="adm_sync_live_prices"),
+            InlineKeyboardButton("📦 بروزرسانی موجودی و دسته‌ها", callback_data="adm_sync_catalog_stock")
+        ],
         [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
     ])
 

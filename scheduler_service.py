@@ -27,11 +27,10 @@ def start_background_scheduler():
                 print("⏰ [SCHEDULER] Running 2-hour live price synchronization...")
                 sync_prices.update_live_prices()
 
-                # هر 7 روز یک‌بار بازسازی درخت کاتالوگ
+                # هر 7 روز یک‌بار بازسازی درخت کاتالوگ، موجودی و دسته‌بندی‌ها
                 if time.time() - last_weekly_check >= 7 * 86400:
-                    print("📅 [SCHEDULER] Running weekly catalog rebuild and categorization...")
-                    sync_catalog.extract_products()
-                    db_bridge.load_catalog_into_db()
+                    print("📅 [SCHEDULER] Running weekly catalog rebuild, inventory and categorization...")
+                    sync_catalog.run_full_catalog_and_category_sync()
                     last_weekly_check = time.time()
 
             except Exception as e:

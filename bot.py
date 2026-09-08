@@ -114,6 +114,7 @@ from admin_panel import (
     admin_clear_laptops_ask,
     admin_clear_laptops_do,
     admin_sync_live_prices,
+    admin_sync_catalog_stock,
     admin_bank_settings,
     admin_prompt_bank_edit,
     handle_admin_bank_input,
@@ -1329,6 +1330,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data == "adm_sync_live_prices":
         await admin_sync_live_prices(update, context)
+
+    elif data == "adm_sync_catalog_stock":
+        await admin_sync_catalog_stock(update, context)
 
     elif data == "adm_bank_settings":
         await admin_bank_settings(update, context)
