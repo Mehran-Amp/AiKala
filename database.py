@@ -155,6 +155,18 @@ class Database:
                     sort_order INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+
+                -- جدول ثبت پست‌های ریپوست‌شده از کانال‌های مبدا به کانال مقصد
+                CREATE TABLE IF NOT EXISTS channel_reposts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_channel TEXT NOT NULL,
+                    source_msg_id INTEGER NOT NULL,
+                    target_channel TEXT NOT NULL,
+                    target_msg_id INTEGER,
+                    has_photo INTEGER DEFAULT 1,
+                    reposted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(source_channel, source_msg_id)
+                );
             """)
             await db.commit()
 
@@ -216,6 +228,7 @@ class Database:
                 ("idx_channel_posts_date", "channel_posts(date)"),
                 ("idx_price_history_product", "price_history(product_id)"),
                 ("idx_user_requests_status", "user_requests(status)"),
+                ("idx_channel_reposts_source", "channel_reposts(source_channel, source_msg_id)"),
             ]
             for idx_name, target in safe_indexes:
                 try:
@@ -493,6 +506,75 @@ class Database:
                 await db.commit()
                 return bool(new_status)
             return False
+
+    async def is_post_reposted(self, source_channel: str, source_msg_id: int) -> bool:
+        """بررسی آیا پستی از کانال مبدا قبلاً ریپوست شده است یا خیر"""
+        src = source_channel.strip().lower()
+        if not src.startswith("@"):
+            src = f"@{src}"
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "SELECT 1 FROM channel_reposts WHERE LOWER(source_channel) = ? AND source_msg_id = ?",
+                (src, source_msg_id)
+            )
+            row = await cursor.fetchone()
+            return bool(row)
+
+    async def record_repost(self, source_channel: str, source_msg_id: int, target_channel: str, target_msg_id: Optional[int] = None, has_photo: bool = True) -> bool:
+        """ثبت رکورد ریپوست موفق در دیتابیس جهت ممانعت قطعی از ارسال مجدد"""
+        src = source_channel.strip().lower()
+        if not src.startswith("@"):
+            src = f"@{src}"
+        tgt = target_channel.strip().lower()
+        if not tgt.startswith("@"):
+            tgt = f"@{tgt}"
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                await db.execute("""
+                    INSERT INTO channel_reposts (source_channel, source_msg_id, target_channel, target_msg_id, has_photo, reposted_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(source_channel, source_msg_id) DO UPDATE SET
+                        target_channel = excluded.target_channel,
+                        target_msg_id = excluded.target_msg_id
+                """, (src, source_msg_id, tgt, target_msg_id, 1 if has_photo else 0, datetime.now().isoformat()))
+                await db.commit()
+                return True
+            except Exception as e:
+                logger.error(f"Error recording repost {src}/{source_msg_id}: {e}")
+                return False
+
+    async def get_reposted_ids(self, source_channel: str) -> set:
+        """دریافت مجموعه شناسه‌های پیام‌های قبلاً ریپوست‌شده از یک کانال مبدا"""
+        src = source_channel.strip().lower()
+        if not src.startswith("@"):
+            src = f"@{src}"
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "SELECT source_msg_id FROM channel_reposts WHERE LOWER(source_channel) = ?",
+                (src,)
+            )
+            rows = await cursor.fetchall()
+            return set(r[0] for r in rows)
+
+    async def get_channel_reposts_count(self, source_channel: Optional[str] = None) -> int:
+        """تعداد کل پست‌های ریپوست‌شده (از یک کانال یا تمام کانال‌ها)"""
+        async with aiosqlite.connect(self.db_path) as db:
+            if source_channel:
+                src = source_channel.strip().lower()
+                if not src.startswith("@"):
+                    src = f"@{src}"
+                cursor = await db.execute("SELECT COUNT(*) FROM channel_reposts WHERE LOWER(source_channel) = ?", (src,))
+            else:
+                cursor = await db.execute("SELECT COUNT(*) FROM channel_reposts")
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def get_all_repost_stats(self) -> Dict[str, int]:
+        """گزارش تفکیکی تعداد ریپوست‌های موفق به ازای هر کانال"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("SELECT source_channel, COUNT(*) FROM channel_reposts GROUP BY source_channel")
+            rows = await cursor.fetchall()
+            return {r[0]: r[1] for r in rows}
 
     # ------------------- Channels & Posts -------------------
 
@@ -872,24 +954,14 @@ class Database:
                 return False
 
     async def seed_default_support_agents(self):
-        """مقداردهی اولیه کارشناسان در صورت خالی بودن دیتابیس"""
-        agents = await self.get_support_agents(active_only=False)
-        if not agents:
-            logger.info("🌱 Seeding default support agents into database...")
-            await self.add_support_agent(
-                name="آقای رضایی",
-                title="مشاوره تخصصی صوتی و تصویری (تلویزیون و ساندبار)",
-                telegram_username="Rezaei_Aikala",
-                phone="09181234567",
-                working_hours="۹ الی ۲۳",
-                sort_order=1
-            )
-            await self.add_support_agent(
-                name="خانم محمدی",
-                title="مشاوره لوازم خانگی بزرگ (یخچال، لباسشویی، ظرفشویی)",
-                telegram_username="Mohammadi_Aikala",
-                phone="09187654321",
-                working_hours="۱۰ الی ۲۲",
-                sort_order=2
-            )
+        """عدم ثبت کارشناس پیش‌فرض - ادمین خود کارشناسان را از پنل ثبت می‌کند"""
+        # در صورت وجود کارشناسان پیش‌فرض آزمایشی قدیمی، پاکسازی می‌شوند
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                await db.execute(
+                    "DELETE FROM support_agents WHERE telegram_username IN ('Rezaei_Aikala', 'Mohammadi_Aikala')"
+                )
+                await db.commit()
+            except Exception:
+                pass
 

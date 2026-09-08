@@ -817,6 +817,13 @@ def merge_extracted_laptops(new_laptops: List[Dict[str, Any]]) -> Dict[str, int]
     save_laptops_catalog(list(existing_map.values()))
     return {"added": added_count, "updated": updated_count, "total": len(existing_map)}
 
+def replace_extracted_laptops(new_laptops: List[Dict[str, Any]]) -> Dict[str, int]:
+    """
+    جایگزینی کامل لیست لپ‌تاپ‌ها با لیست جدید ارسالی (حذف کامل لیست قبلی).
+    """
+    save_laptops_catalog(new_laptops)
+    return {"added": len(new_laptops), "updated": 0, "total": len(new_laptops), "replaced": True}
+
 def format_laptops_preview_for_admin(laptops: List[Dict[str, Any]], max_display: int = 10) -> str:
     """ایجاد پیام پیش‌نمایش متنی برای ادمین تلگرام جهت تایید نهایی"""
     if not laptops:

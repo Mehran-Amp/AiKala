@@ -100,10 +100,7 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         # ۲. کاتالوگ و قیمت‌ها
         [
-            InlineKeyboardButton("📊 ارسال فایل اکسل لپ‌تاپ (.xlsx)", callback_data="adm_upload_laptop_excel"),
-            InlineKeyboardButton("💻 مدیریت کاتالوگ لپ‌تاپ", callback_data="adm_laptop_hub")
-        ],
-        [
+            InlineKeyboardButton("💻 مدیریت کاتالوگ لپ‌تاپ", callback_data="adm_laptop_hub"),
             InlineKeyboardButton("🔄 بروزرسانی دستی قیمتها", callback_data="adm_sync_live_prices")
         ],
         
@@ -117,6 +114,11 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         [
             InlineKeyboardButton("💳 مشخصات بانکی و بیعانه", callback_data="adm_bank_settings"),
             InlineKeyboardButton("📊 گزارش وضعیت کاتالوگ", callback_data="adm_catalog_report")
+        ],
+        
+        # ۵. پایش و ریپوست کانال‌ها به @AiKala_Image
+        [
+            InlineKeyboardButton("📡 پایش کانال‌ها و آلبوم‌ها (@AiKala_Image)", callback_data="adm_channels")
         ],
         
         # بازگشت به منوی اصلی ربات
@@ -161,14 +163,12 @@ async def admin_laptop_hub(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"روش ورود اطلاعات مورد نظر خود را انتخاب فرمایید:\n"
         f"📊 <b>ارسال فایل اکسل:</b> آپلود فایل جدول (.xlsx / .csv) به صورت مستقیم\n"
-        f"📸 <b>ارسال عکس:</b> اسکرین‌شات یا عکس جدول چاپی/دیجیتال\n"
-        f"📋 <b>کپی متن:</b> پیست کردن مستقیم متن جدول اکسل یا پیام تلگرامی"
+        f"📸 <b>ارسال عکس:</b> اسکرین‌شات یا عکس جدول چاپی/دیجیتال"
     )
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 ارسال فایل اکسل (.xlsx / .csv)", callback_data="adm_upload_laptop_excel")],
         [InlineKeyboardButton("📸 ارسال عکس یا اسکرین‌شات جدول", callback_data="adm_upload_laptop_photo")],
-        [InlineKeyboardButton("📋 کپی و ارسال مستقیم متن جدول", callback_data="adm_text_laptop_prompt")],
         [InlineKeyboardButton("🗑 پاکسازی لیست لپ‌تاپ‌ها", callback_data="adm_clear_laptops_ask")],
         [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
     ])
@@ -384,20 +384,24 @@ async def admin_bank_settings(update: Update, context: ContextTypes.DEFAULT_TYPE
     # پاکسازی حالت‌های انتظار ویرایش قبلی
     context.user_data.pop("awaiting_bank_edit_field", None)
 
-    card_num = getattr(config, "CARD_NUMBER", "6104-3386-4929-6106")
-    card_holder = getattr(config, "CARD_HOLDER", "فروشگاه آاگ کالا مهران امین پور")
-    shaba_html = getattr(config, "SHABA_HTML", "IR <code>620120020000005786685564</code>")
+    card_num = getattr(config, "CARD_NUMBER", "")
+    card_holder = getattr(config, "CARD_HOLDER", "")
+    shaba_html = getattr(config, "SHABA_HTML", "")
     deposit_pct = getattr(config, "DEPOSIT_PERCENT", 8)
+
+    card_display = f"<code>{card_num}</code>" if card_num else "<i>(هنوز ثبت نشده است)</i>"
+    shaba_display = shaba_html if shaba_html else "<i>(هنوز ثبت نشده است)</i>"
+    holder_display = f"<b>{card_holder}</b>" if card_holder else "<i>(هنوز ثبت نشده است)</i>"
 
     text = (
         f"💳 <b>مدیریت حساب بانکی و بیعانه فروشگاه:</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"▫️ شماره کارت: <code>{card_num}</code>\n"
-        f"▫️ شماره شبا: {shaba_html}\n"
-        f"▫️ به نام: <b>{card_holder}</b>\n"
+        f"▫️ شماره کارت: {card_display}\n"
+        f"▫️ شماره شبا: {shaba_display}\n"
+        f"▫️ به نام: {holder_display}\n"
         f"▫️ درصد بیعانه: <b>{deposit_pct}٪ کل مبلغ کالا</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📌 جهت تغییر هر کدام از موارد، روی دکمه مربوطه کلیک فرمایید:\n"
+        f"📌 جهت ثبت یا تغییر هر کدام از موارد، روی دکمه مربوطه کلیک فرمایید:\n"
         f"<i>(تغییرات به صورت آنی در پیش‌فاکتورها، محاسبات مالی و فاکتورهای رسمی ذخیره و اعمال می‌شود)</i>"
     )
 
@@ -1171,3 +1175,289 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
         f"✨ <i>از این لحظه، هر کاربری دکمه «📸 تصاویر محصول» این کالا یا مدل‌های مشابه آن را لمس کند، کل آلبوم {total_photos_detected} تایی به صورت خودکار برای او ارسال خواهد شد.</i>",
         parse_mode="HTML"
     )
+
+# ═════════════════════════════════════════════════════════════════════
+# 📡 مدیریت پایش خودکار کانال‌ها و ریپوست به @AiKala_Image
+# ═════════════════════════════════════════════════════════════════════
+
+async def admin_channel_monitor_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """منوی اصلی مدیریت کانال‌های تحت پایش و وضعیت ریپوست به @AiKala_Image"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    from channel_monitor import get_target_channels_list, TARGET_IMAGE_CHANNEL, MONITOR_STATUS
+
+    # دریافت لیست کانال‌ها
+    channels = await get_target_channels_list()
+
+    # دریافت آمار پست‌های ریپوست شده
+    total_reposted = 0
+    stats_map = {}
+    try:
+        from channel_monitor import tracker as _tracker
+        total_reposted = _tracker.get_total_count()
+        stats_map = _tracker.get_stats()
+    except Exception:
+        pass
+
+    try:
+        from database import Database
+        _db = Database()
+        db_total = await _db.get_channel_reposts_count()
+        if db_total > total_reposted:
+            total_reposted = db_total
+        db_stats = await _db.get_all_repost_stats()
+        for k, v in db_stats.items():
+            stats_map[k] = max(stats_map.get(k, 0), v)
+    except Exception:
+        pass
+
+    ch_lines = []
+    if channels:
+        for idx, ch in enumerate(channels, 1):
+            cnt = stats_map.get(ch.lower(), 0)
+            ch_lines.append(f"{idx}️⃣ <b>{ch}</b>: <code>{cnt} پست ریپوست‌شده</code>")
+    else:
+        ch_lines.append("<i>هیچ کانالی در حال حاضر متصل نیست.</i>")
+
+    last_run_str = MONITOR_STATUS.get("last_run") or "در انتظار اولین اجرا"
+    next_run_str = MONITOR_STATUS.get("next_run") or "هر ۱۲ ساعت یک‌بار"
+
+    text = (
+        f"📡 <b>مرکز پایش خودکار کانال‌ها و گالری تصاویر</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎯 <b>کانال مقصد:</b> <code>{TARGET_IMAGE_CHANNEL}</code>\n"
+        f"👑 <b>مالکیت پست‌ها:</b> متعلق به کانال {TARGET_IMAGE_CHANNEL} (امکان ویرایش دستی)\n"
+        f"📸 <b>فیلتر محتوا:</b> فقط پست‌های حاوی عکس (تک‌عکس و آلبوم)\n"
+        f"💎 <b>حفظ ساختار:</b> نگهداری ۱۰۰٪ متن، کپشن، مشخصات و چیدمان آلبوم\n"
+        f"🚫 <b>جلوگیری از تکرار:</b> ممانعت قطعی از انتشار هرگونه پست تکراری\n"
+        f"⏱ <b>بررسی خودکار:</b> هر ۱۲ ساعت یک‌بار (پست‌های جدید)\n"
+        f"⏳ <b>محدوده بررسی اولیه:</b> ۴ ماه گذشته (۱۲۰ روز)\n"
+        f"📊 <b>مجموع پست‌های ریپوست‌شده تاکنون:</b> <b>{total_reposted} پست</b>\n"
+        f"🕒 <b>آخرین پویش:</b> {last_run_str}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 <b>کانال‌های تحت پایش فعال:</b>\n" +
+        "\n".join(ch_lines)
+    )
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("➕ افزودن کانال جدید", callback_data="adm_add_channel"),
+            InlineKeyboardButton("🔄 اجرای پایش فوری (۴ ماهه)", callback_data="adm_sync_channels_all")
+        ],
+        [
+            InlineKeyboardButton("🗑 مدیریت و حذف کانال‌ها", callback_data="adm_list_channels_delete")
+        ],
+        [
+            InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")
+        ]
+    ])
+
+    if update.callback_query:
+        try:
+            await update.callback_query.answer()
+        except Exception:
+            pass
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            return
+        except Exception:
+            pass
+    await (update.callback_query.message if update.callback_query else update.message).reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+
+async def admin_add_channel_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """درخواست نام کاربری یا شناسه کانال جدید از ادمین"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    context.user_data["awaiting_channel_add"] = True
+
+    msg = (
+        "➕ <b>افزودن کانال جدید به سیستم پایش هوشمند:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "لطفاً آیدی کانال مورد نظر را ارسال فرمایید.\n\n"
+        "📌 <b>نمونه‌های معتبر:</b>\n"
+        "▫️ <code>@my_channel</code>\n"
+        "▫️ <code>https://t.me/my_channel</code>\n"
+        "▫️ <code>my_channel</code>\n\n"
+        "✨ <i>نکته: به محض ثبت کانال، ربات به طور خودکار پست‌های عکس‌دار ۴ ماه گذشته آن را استخراج و بدون حذف هیچ متنی با مالکیت @AiKala_Image منتشر می‌نماید.</i>\n\n"
+        "❌ جهت انصراف: /cancel"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 انصراف و بازگشت", callback_data="adm_channels")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(msg, reply_markup=kb, parse_mode="HTML")
+            return
+        except Exception:
+            pass
+    await update.effective_message.reply_text(msg, reply_markup=kb, parse_mode="HTML")
+
+
+async def handle_admin_channel_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """دریافت آیدی کانال ارسالی توسط ادمین و آغاز پویش خودکار ۴ ماهه"""
+    if not context.user_data.get("awaiting_channel_add"):
+        return False
+
+    user = update.effective_user
+    if not is_admin(user.id):
+        return False
+
+    raw_text = (update.message.text or "").strip()
+    if raw_text.startswith("/cancel"):
+        context.user_data.pop("awaiting_channel_add", None)
+        await update.message.reply_text("❌ افزودن کانال لغو گردید.")
+        return True
+
+    from channel_monitor import normalize_channel_username, sync_single_channel, TARGET_IMAGE_CHANNEL
+    cid = normalize_channel_username(raw_text)
+
+    if len(cid) < 3 or cid == "@":
+        await update.message.reply_text("⚠️ فرمت آیدی کانال نامعتبر است. لطفاً به صورت <code>@username</code> ارسال فرمایید یا دستور /cancel را بزنید.", parse_mode="HTML")
+        return True
+
+    context.user_data.pop("awaiting_channel_add", None)
+
+    # ثبت در دیتابیس
+    try:
+        from channel_monitor import tracker as _tracker
+        _tracker.add_channel(cid)
+    except Exception:
+        pass
+
+    try:
+        from database import Database
+        _db = Database()
+        await _db.add_monitored_channel(cid, channel_name=cid)
+    except Exception as e:
+        logger.error(f"Failed to add channel {cid} to DB: {e}")
+
+    await update.message.reply_text(
+        f"✅ <b>کانال <code>{cid}</code> با موفقیت افزوده شد!</b>\n\n"
+        f"🚀 <b>پویش و استخراج پست‌های ۴ ماه گذشته آغاز گردید:</b>\n"
+        f"▫️ فقط پست‌های حاوی عکس (تک‌عکس و آلبوم)\n"
+        f"▫️ بدون حذف هیچ کلمه یا شماره‌ای از کپشن\n"
+        f"▫️ انتشار مستقیم با مالکیت اختصاصی کانال <code>{TARGET_IMAGE_CHANNEL}</code>\n"
+        f"▫️ بررسی مجدد خودکار هر ۱۲ ساعت یک‌بار\n\n"
+        f"<i>عملیات در پس‌زمینه در جریان است و نیازی به توقف یا انتظار نیست.</i>",
+        parse_mode="HTML"
+    )
+
+    # اجرای غیرمسدودکننده در پس‌زمینه
+    asyncio.create_task(sync_single_channel(cid, days=120))
+    return True
+
+
+async def admin_sync_channels_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اجرای دستی و آنی همگام‌سازی ۴ ماهه برای تمامی کانال‌ها"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    from channel_monitor import sync_all_monitored_channels, TARGET_IMAGE_CHANNEL
+
+    if update.callback_query:
+        await update.callback_query.answer("🚀 پایش و ریپوست ۴ ماهه آغاز شد...", show_alert=False)
+
+    text = (
+        f"🚀 <b>عملیات پایش و ریپوست ۴ ماهه آغاز شد!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📡 تمام کانال‌های تحت پایش در نوبت بررسی قرار گرفتند.\n"
+        f"📸 پست‌های عکس‌دار (آلبوم‌ها و تک‌عکس‌ها) ۴ ماه گذشته استخراج و با مالکیت کامل کانال <code>{TARGET_IMAGE_CHANNEL}</code> ریپوست خواهند شد.\n"
+        f"🚫 پست‌های تکراری به صورت هوشمند شناسایی و صرف‌نظر می‌شوند.\n"
+        f"⏱ این پایش هر ۱۲ ساعت یک‌بار نیز به صورت خودکار اجرا می‌گردد."
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 بازگشت به مرکز پایش کانال‌ها", callback_data="adm_channels")]
+    ])
+
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            # آغاز پویش در پس‌زمینه
+            asyncio.create_task(sync_all_monitored_channels(days=120))
+            return
+        except Exception:
+            pass
+    await update.effective_message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    asyncio.create_task(sync_all_monitored_channels(days=120))
+
+
+async def admin_list_channels_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش لیست کانال‌ها همراه با امکان حذف"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    from channel_monitor import get_target_channels_list
+    channels = await get_target_channels_list()
+
+    buttons = []
+    if channels:
+        for ch in channels:
+            buttons.append([
+                InlineKeyboardButton(f"❌ حذف {ch}", callback_data=f"adm_del_ch|{ch}")
+            ])
+
+    buttons.append([InlineKeyboardButton("🔙 بازگشت به مرکز پایش", callback_data="adm_channels")])
+    kb = InlineKeyboardMarkup(buttons)
+
+    msg = (
+        "🗑 <b>مدیریت و حذف کانال‌های تحت پایش:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "جهت حذف هر کانال از پایش خودکار، دکمه حذف مربوط به آن را لمس فرمایید:"
+    )
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(msg, reply_markup=kb, parse_mode="HTML")
+            return
+        except Exception:
+            pass
+    await update.effective_message.reply_text(msg, reply_markup=kb, parse_mode="HTML")
+
+
+async def admin_delete_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, channel_to_del: str):
+    """حذف کانال از پایش"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    try:
+        from channel_monitor import tracker as _tracker
+        _tracker.delete_channel(channel_to_del)
+    except Exception:
+        pass
+
+    try:
+        from database import Database
+        _db = Database()
+        await _db.delete_monitored_channel(channel_to_del)
+    except Exception as e:
+        logger.error(f"Error deleting channel {channel_to_del}: {e}")
+
+    # همچنین از monitor_state.json هم حذف شود
+    try:
+        from channel_monitor import load_monitor_state, save_monitor_state
+        state = load_monitor_state()
+        if channel_to_del in state:
+            state.pop(channel_to_del, None)
+            save_monitor_state(state)
+    except Exception:
+        pass
+
+    if update.callback_query:
+        await update.callback_query.answer(f"✅ کانال {channel_to_del} حذف گردید.", show_alert=True)
+
+    # بازگشت به لیست
+    await admin_list_channels_delete(update, context)
+

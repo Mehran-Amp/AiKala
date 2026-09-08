@@ -62,6 +62,7 @@ from laptop_extractor import (
     extract_laptops_from_excel,
     set_gemini_api_key,
     merge_extracted_laptops,
+    replace_extracted_laptops,
     format_laptops_preview_for_admin,
     load_laptops_catalog
 )
@@ -224,6 +225,48 @@ async def auth_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             parse_mode="HTML"
         )
 
+def make_laptop_confirm_prompt(extracted: list, source_title: str = "جدول") -> tuple:
+    """
+    ایجاد پیام پیش‌نمایش و کیبورد تاییدیه نحوه ثبت در کاتالوگ فروشگاه:
+    از ادمین سوال می‌شود که آیا مایل است لیست قبلی لپ‌تاپ‌ها کاملاً حذف شود یا با آن ادغام گردد.
+    """
+    existing = load_laptops_catalog()
+    existing_count = len(existing)
+    preview_text = format_laptops_preview_for_admin(extracted, max_display=10)
+
+    if existing_count > 0:
+        full_text = (
+            f"📊 <b>استخراج هوشمند از {html.escape(source_title)}:</b>\n\n"
+            f"{preview_text}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"❓ <b>نحوه ثبت در کاتالوگ فروشگاه:</b>\n"
+            f"▫️ تعداد <b>{existing_count} مدل لپ‌تاپ</b> از قبل در کاتالوگ موجود است.\n\n"
+            f"⚠️ <b>آیا مایلید لیست قبلی لپ‌تاپ‌ها کاملاً حذف شود یا این لیست جدید با آن ادغام (ترکیب) گردد؟</b>"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"🗑 بله، لیست قبلی ({existing_count}) کاملاً حذف و جایگزین شود", callback_data="adm_confirm_laptops_replace")],
+            [InlineKeyboardButton("➕ خیر، با لیست قبلی ادغام شود (حفظ مدل‌های قبل)", callback_data="adm_confirm_laptops_merge")],
+            [
+                InlineKeyboardButton("❌ انصراف و لغو", callback_data="adm_cancel_laptops"),
+                InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back_panel")
+            ]
+        ])
+    else:
+        full_text = (
+            f"📊 <b>استخراج هوشمند از {html.escape(source_title)}:</b>\n\n"
+            f"{preview_text}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"✨ <i>کاتالوگ فعلی لپ‌تاپ خالی است. جهت تایید و ثبت در فروشگاه دکمه زیر را انتخاب فرمایید:</i>"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"✅ تایید و ثبت {len(extracted)} لپ‌تاپ در کاتالوگ", callback_data="adm_confirm_laptops_replace")],
+            [
+                InlineKeyboardButton("❌ انصراف و لغو", callback_data="adm_cancel_laptops"),
+                InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back_panel")
+            ]
+        ])
+    return full_text, kb
+
 # =====================================================================
 # 💬 هندلر پیام‌های متنی و جستجوی کالا
 # =====================================================================
@@ -251,6 +294,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if adm and context.user_data.get("awaiting_bank_edit_field"):
         handled = await handle_admin_bank_input(update, context)
+        if handled:
+            return
+
+    if adm and context.user_data.get("awaiting_channel_add"):
+        from admin_panel import handle_admin_channel_add_input
+        handled = await handle_admin_channel_add_input(update, context)
         if handled:
             return
 
@@ -311,16 +360,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("awaiting_laptop_photo", None)
             context.user_data.pop("awaiting_laptop_excel", None)
 
-            preview_text = format_laptops_preview_for_admin(extracted, max_display=10)
-            confirm_kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(f"✅ تایید و ثبت {len(extracted)} لپ‌تاپ در فروشگاه", callback_data="adm_confirm_laptops"),
-                    InlineKeyboardButton("❌ انصراف", callback_data="adm_cancel_laptops")
-                ],
-                [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
-            ])
+            preview_text, confirm_kb = make_laptop_confirm_prompt(extracted, source_title=f"فایل اکسل ({file_title})")
             await status_msg.edit_text(
-                f"📊 <b>استخراج موفقیت‌آمیز از فایل اکسل ({html.escape(file_title)}):</b>\n\n{preview_text}",
+                preview_text,
                 reply_markup=confirm_kb,
                 parse_mode="HTML"
             )
@@ -358,16 +400,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data["pending_extracted_laptops"] = text_extracted
                 context.user_data.pop("awaiting_laptop_photo", None)
                 context.user_data.pop("awaiting_laptop_excel", None)
-                preview_text = format_laptops_preview_for_admin(text_extracted, max_display=10)
-                confirm_kb = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(f"✅ تایید و ثبت {len(text_extracted)} لپ‌تاپ در فروشگاه", callback_data="adm_confirm_laptops"),
-                        InlineKeyboardButton("❌ انصراف", callback_data="adm_cancel_laptops")
-                    ],
-                    [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
-                ])
+                preview_text, confirm_kb = make_laptop_confirm_prompt(text_extracted, source_title="متن ارسالی")
                 await update.message.reply_text(
-                    f"📋 <b>استخراج موفقیت‌آمیز از متن ارسالی:</b>\n\n{preview_text}",
+                    preview_text,
                     reply_markup=confirm_kb,
                     parse_mode="HTML"
                 )
@@ -407,14 +442,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["pending_extracted_laptops"] = extracted
             context.user_data.pop("awaiting_laptop_photo", None)
 
-            preview_text = format_laptops_preview_for_admin(extracted, max_display=10)
-            confirm_kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(f"✅ تایید و ثبت {len(extracted)} لپ‌تاپ در فروشگاه", callback_data="adm_confirm_laptops"),
-                    InlineKeyboardButton("❌ انصراف", callback_data="adm_cancel_laptops")
-                ],
-                [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
-            ])
+            preview_text, confirm_kb = make_laptop_confirm_prompt(extracted, source_title="عکس ارسالی جدول")
             await status_msg.edit_text(preview_text, reply_markup=confirm_kb, parse_mode="HTML")
             return
         except Exception as err:
@@ -901,20 +929,29 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data == "adm_channels":
         await query.answer()
-        monitored_list = [
-            "📡 <b>کانال‌های متصل و تحت پایش سیستم:</b>\n",
-            "1️⃣ <b>گالری تصاویر محصولات:</b> (فعال و همگام)",
-            "2️⃣ <b>کانال مرجع قیمت و موجودی:</b> <code>@LG_SAMSUNG_DEAWOO</code> (همگام)",
-            "\n💡 <i>تمامی تصاویر و متن‌های ارسالی به این کانال‌ها به صورت خودکار ایندکس و در ربات در دسترس قرار می‌گیرند.</i>"
-        ]
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 همگام‌سازی فوری", callback_data="adm_sync_photos")],
-            [InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back_panel")]
-        ])
-        try:
-            await query.edit_message_text("\n".join(monitored_list), reply_markup=kb, parse_mode="HTML")
-        except Exception:
-            await query.message.reply_text("\n".join(monitored_list), reply_markup=kb, parse_mode="HTML")
+        from admin_panel import admin_channel_monitor_menu
+        await admin_channel_monitor_menu(update, context)
+
+    elif data == "adm_add_channel":
+        await query.answer()
+        from admin_panel import admin_add_channel_prompt
+        await admin_add_channel_prompt(update, context)
+
+    elif data == "adm_sync_channels_all":
+        await query.answer()
+        from admin_panel import admin_sync_channels_all
+        await admin_sync_channels_all(update, context)
+
+    elif data == "adm_list_channels_delete":
+        await query.answer()
+        from admin_panel import admin_list_channels_delete
+        await admin_list_channels_delete(update, context)
+
+    elif data.startswith("adm_del_ch|"):
+        await query.answer()
+        ch_to_del = data.split("|")[1]
+        from admin_panel import admin_delete_channel_handler
+        await admin_delete_channel_handler(update, context, ch_to_del)
 
     elif data == "adm_pending_orders":
         await query.answer()
@@ -1325,8 +1362,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["awaiting_laptop_photo"] = True
         context.user_data.pop("pending_extracted_laptops", None)
         cancel_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 ارسال فایل اکسل (.xlsx / .csv)", callback_data="adm_upload_laptop_excel")],
-            [InlineKeyboardButton("🔙 انصراف و بازگشت به پنل", callback_data="adm_cancel_laptops")]
+            [InlineKeyboardButton("🔙 انصراف و بازگشت", callback_data="adm_laptop_hub")]
         ])
         msg = (
             "💻 <b>استخراج هوشمند لیست قیمت و موجودی لپ‌تاپ:</b>\n"
@@ -1345,8 +1381,35 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception:
             await query.message.reply_text(msg, reply_markup=cancel_kb, parse_mode="HTML")
 
-    elif data == "adm_confirm_laptops":
-        await query.answer("در حال ذخیره و به‌روزرسانی محصولات...", show_alert=False)
+    elif data == "adm_confirm_laptops_replace":
+        await query.answer("در حال جایگزینی کامل لیست لپ‌تاپ‌ها...", show_alert=False)
+        extracted = context.user_data.pop("pending_extracted_laptops", None)
+        if not extracted:
+            await query.message.reply_text("⚠️ داده‌ای برای ثبت یافت نشد یا جلسه منقضی شده است.")
+            return
+
+        res = replace_extracted_laptops(extracted)
+        # به‌روزرسانی آنی کش محصولات در حافظه بدون نیاز به ری‌استارت
+        load_json_products()
+
+        done_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📂 مشاهده دسته‌بندی لپ‌تاپ", callback_data="cat_m_laptop")],
+            [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+        ])
+        done_text = (
+            f"🎉 <b>لیست لپ‌تاپ‌ها با موفقیت جایگزین شد!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🗑 <b>لیست قبلی لپ‌تاپ‌ها به طور کامل حذف گردید.</b>\n"
+            f"💻 تعداد کل لپ‌تاپ‌های فعال جدید: <b>{res['total']} مدل</b>\n\n"
+            f"✨ کلیه مدل‌ها بلافاصله در دسته‌بندی «💻 لپ‌تاپ» و زیرمجموعه برندها قرار گرفتند و با جستجو نیز در دسترس هستند."
+        )
+        try:
+            await query.edit_message_text(done_text, reply_markup=done_kb, parse_mode="HTML")
+        except Exception:
+            await query.message.reply_text(done_text, reply_markup=done_kb, parse_mode="HTML")
+
+    elif data == "adm_confirm_laptops_merge" or data == "adm_confirm_laptops":
+        await query.answer("در حال ادغام با کاتالوگ لپ‌تاپ...", show_alert=False)
         extracted = context.user_data.pop("pending_extracted_laptops", None)
         if not extracted:
             await query.message.reply_text("⚠️ داده‌ای برای ثبت یافت نشد یا جلسه منقضی شده است.")
@@ -1361,7 +1424,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
         ])
         done_text = (
-            f"🎉 <b>لیست لپ‌تاپ‌ها با موفقیت ذخیره و به‌روزرسانی شد!</b>\n"
+            f"🎉 <b>لیست لپ‌تاپ‌ها با موفقیت با کاتالوگ ادغام شد!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"➕ مدل‌های جدید اضافه شده: <b>{merge_res['added']} مدل</b>\n"
             f"🔄 مدل‌های به‌روزرسانی شده: <b>{merge_res['updated']} مدل</b>\n"

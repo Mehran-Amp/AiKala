@@ -58,6 +58,13 @@ CORE_SERVICES: List[Dict[str, Any]] = [
         "script": "scheduler_service.py",
         "critical": False,
         "env_check": None
+    },
+    {
+        "id": "monitor",
+        "name": "📡 Channel Monitor & Reposter (@AiKala_Image)",
+        "script": "channel_monitor.py",
+        "critical": False,
+        "env_check": "TELEGRAM_BOT_TOKEN"
     }
 ]
 
@@ -72,7 +79,7 @@ def check_preflight_syntax(scripts: List[str]) -> bool:
         "guidbuy.py", "support_service.py", "keyboards.py", "database.py",
         "order_flow.py", "photo_service.py", "order_tracking.py",
         "scheduler_service.py", "sync_prices.py", "sync_catalog.py",
-        "laptop_extractor.py", "admin_panel.py"
+        "laptop_extractor.py", "admin_panel.py", "channel_monitor.py"
     ])))
     failed = []
 
@@ -167,6 +174,7 @@ def main():
     )
     parser.add_argument("--bot-only", action="store_true", help="Run Telegram bot only")
     parser.add_argument("--scheduler-only", action="store_true", help="Run catalog & price scheduler only")
+    parser.add_argument("--monitor-only", action="store_true", help="Run channel monitor & reposter only")
     parser.add_argument("--no-restart", action="store_true", help="Do not auto-restart exited processes")
     parser.add_argument("--check", action="store_true", help="Perform pre-flight syntax check and exit")
     args = parser.parse_args()
@@ -177,6 +185,8 @@ def main():
         selected_services = [s for s in CORE_SERVICES if s["id"] == "bot"]
     elif args.scheduler_only:
         selected_services = [s for s in CORE_SERVICES if s["id"] == "scheduler"]
+    elif args.monitor_only:
+        selected_services = [s for s in CORE_SERVICES if s["id"] == "monitor"]
     else:
         selected_services = CORE_SERVICES
 

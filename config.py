@@ -62,9 +62,9 @@ BANK_SETTINGS_FILE = "bank_settings.json"
 
 def _load_bank_settings():
     default_cfg = {
-        "card_number": os.getenv("DEPOSIT_CARD_NUMBER", "6104-3386-4929-6106"),
-        "card_holder": os.getenv("DEPOSIT_CARD_NAME", "فروشگاه آاگ کالا مهران امین پور"),
-        "card_shaba": os.getenv("DEPOSIT_CARD_SHABA", "IR 620120020000005786685564"),
+        "card_number": os.getenv("DEPOSIT_CARD_NUMBER", ""),
+        "card_holder": os.getenv("DEPOSIT_CARD_NAME", ""),
+        "card_shaba": os.getenv("DEPOSIT_CARD_SHABA", ""),
         "deposit_percent": int(os.getenv("DEPOSIT_PERCENT", "8"))
     }
     if os.path.exists(BANK_SETTINGS_FILE):
@@ -79,9 +79,9 @@ def _load_bank_settings():
 _bank_cfg = _load_bank_settings()
 
 DEPOSIT_PERCENT: int = int(_bank_cfg.get("deposit_percent", 8))
-DEPOSIT_CARD_NUMBER: str = str(_bank_cfg.get("card_number", "6104-3386-4929-6106"))
-DEPOSIT_CARD_NAME: str = str(_bank_cfg.get("card_holder", "فروشگاه آاگ کالا مهران امین پور"))
-DEPOSIT_CARD_SHABA: str = str(_bank_cfg.get("card_shaba", "IR 620120020000005786685564"))
+DEPOSIT_CARD_NUMBER: str = str(_bank_cfg.get("card_number", ""))
+DEPOSIT_CARD_NAME: str = str(_bank_cfg.get("card_holder", ""))
+DEPOSIT_CARD_SHABA: str = str(_bank_cfg.get("card_shaba", ""))
 
 # متغیرهای معادل جهت سازگاری کامل با تمامی توابع bot.py
 CARD_NUMBER: str = DEPOSIT_CARD_NUMBER
@@ -134,9 +134,9 @@ def update_bank_settings(
         print("خطا در ذخیره مشخصات بانکی:", e)
 
     DEPOSIT_PERCENT = int(current.get("deposit_percent", 8))
-    DEPOSIT_CARD_NUMBER = str(current.get("card_number", "6104-3386-4929-6106"))
-    DEPOSIT_CARD_NAME = str(current.get("card_holder", "فروشگاه آاگ کالا مهران امین پور"))
-    DEPOSIT_CARD_SHABA = str(current.get("card_shaba", "IR 620120020000005786685564"))
+    DEPOSIT_CARD_NUMBER = str(current.get("card_number", ""))
+    DEPOSIT_CARD_NAME = str(current.get("card_holder", ""))
+    DEPOSIT_CARD_SHABA = str(current.get("card_shaba", ""))
 
     CARD_NUMBER = DEPOSIT_CARD_NUMBER
     CARD_HOLDER = DEPOSIT_CARD_NAME
@@ -176,22 +176,7 @@ def round_deposit(amount: int) -> int:
     return amount
 
 # ------------------- Support Staff -------------------
-SUPPORT_STAFF: List[Dict[str, str]] = [
-    {
-        "name": "مهران امین‌پور (مدیریت فروش)",
-        "landline": "087-34220000",
-        "mobile": "09195859434",
-        "whatsapp_link": "https://wa.me/989195859434",
-        "telegram_link": "https://t.me/faridamp",
-    },
-    {
-        "name": "کارشناس استعلام کرایه و باربری",
-        "landline": "087-34220001",
-        "mobile": "09195859434",
-        "whatsapp_link": "https://wa.me/989195859434",
-        "telegram_link": "https://t.me/faridamp",
-    },
-]
+SUPPORT_STAFF: List[Dict[str, str]] = []
 
 SUPPORT_HOURS: str = "۹ صبح تا ۹ شب (پاسخگویی همه‌روزه)"
 

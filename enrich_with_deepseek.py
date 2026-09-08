@@ -211,16 +211,64 @@ def call_deepseek_api(api_key: str, product_name: str, base_url: str = DEFAULT_B
         logger.error(f"❌ [DeepSeek Request Exception for {cleaned_name}]: {e}")
         return None
 
+# لیست کلمات کلیدی، دسته‌بندی‌ها و زیردسته‌های مجاز برای لوازم ریز
+SMALL_APPLIANCE_KEYWORDS = [
+    'لوازم ریز', 'لوازم ریز برقی', 'خرده ریز', 'جاروبرقی', 'جارو برقی', 'جارو رباتیک', 'جارو شارژی',
+    'مایکروویو', 'سولاردام', 'مایکروفر', 'ماکروفر', 'ماکروویو', 'خردکن', 'اتو بخار', 'اتو مخزن دار',
+    'چای ساز', 'چایی ساز', 'سرخ کن', 'مخلوط کن', 'اسپرسو ساز', 'اسپرسوساز', 'قهوه ساز',
+    'آبمیوه گیر', 'آبمیوه گیری', 'مولتی کوکر', 'زود پز', 'زودپز', 'پلوپز', 'آب مرکبات گیر',
+    'غذا ساز', 'غذاساز', 'همزن', 'چرخ گوشت', 'گوشت کوب', 'گوشتکوب', 'آسیاب', 'بستنی ساز',
+    'سالاد ساز', 'رنده برقی', 'استایلر', 'تصفیه هوا', 'ساندویچ ساز', 'توستر', 'کتری برقی', 'هواپز'
+]
+
+def is_small_appliance(product: dict) -> bool:
+    """
+    بررسی دقیق اینکه آیا محصول متعلق به دسته‌بندی لوازم ریز برقی است یا خیر.
+    طبق دستور صریح، استفاده از API دیپ‌سیک فقط و فقط منحصراً برای کالاهای این دسته‌بندی مجاز است.
+    """
+    if not product or not isinstance(product, dict):
+        return False
+
+    # ۱. بررسی کلید دسته‌بندی اصلی
+    cat_key = str(product.get("category_key", "")).lower().strip()
+    if cat_key in ["small_appliances", "small_appliance", "small-appliances", "smallappliances"]:
+        return True
+
+    # ۲. بررسی نام دسته‌بندی
+    cat_name = str(product.get("category_name", "") or product.get("category", "")).strip()
+    if "لوازم ریز" in cat_name or "خرده ریز" in cat_name:
+        return True
+
+    # ۳. بررسی زیردسته‌بندی‌ها
+    subcat_name = str(product.get("subcategory_name", "") or product.get("subcategory", "") or product.get("subcategory_key", "")).strip()
+    for kw in SMALL_APPLIANCE_KEYWORDS:
+        if kw in cat_name or kw in subcat_name:
+            return True
+
+    # ۴. در صورت خالی بودن دسته‌بندی، بررسی کلمات کلیدی در عنوان محصول
+    if not cat_key or cat_key in ["default", ""]:
+        pname = str(product.get("name", "")).strip()
+        for kw in SMALL_APPLIANCE_KEYWORDS:
+            if kw in pname:
+                return True
+
+    return False
+
 def product_has_specs(product: dict) -> bool:
     """بررسی اینکه آیا کالا از قبل دارای مشخصات فنی کامل است یا خیر"""
     if not product:
         return True
     if product.get("ai_specs"):
         return True
+    if product.get("specs") and isinstance(product.get("specs"), dict) and len(product["specs"]) > 0:
+        return True
+    if product.get("more_details"):
+        return True
     return bool(
         product.get("panel") or product.get("assembly") or product.get("resolution") or 
         product.get("temp_range") or product.get("key_features") or product.get("plan") or 
-        product.get("capacity_kg") or product.get("baskets")
+        product.get("capacity_kg") or product.get("baskets") or product.get("power") or
+        product.get("capacity") or product.get("blade")
     )
 
 def _sync_save_product_update(pid: str, specs: dict):
@@ -258,11 +306,19 @@ def _sync_save_product_update(pid: str, specs: dict):
 async def async_enrich_product_on_demand(product: dict) -> bool:
     """
     تکمیل در لحظه مشخصات هنگام کلیک کاربر (Lazy Loading On-Demand):
-    ۱. بررسی می‌کند آیا کالا قبلاً مشخصات دارد؟ اگر بله، هیچ کار اضافه‌ای انجام نمی‌دهد (۰ توکن).
-    ۲. فقط کالاهای بدون مشخصات با DeepSeek استعلام شده و در لحظه برای کاربر نمایش داده می‌شوند.
-    ۳. نتیجه استخراج‌شده به صورت همزمان برای همیشه در کاتالوگ ذخیره می‌شود تا دفعات بعدی دیگر نیازی به هوش مصنوعی نباشد.
+    ۱. قانون قطعی و انحصاری: استفاده از API دیپ‌سیک فقط و فقط برای دسته «لوازم ریز برقی» مجاز است.
+    ۲. بررسی می‌کند آیا کالا قبلاً مشخصات دارد؟ اگر بله، هیچ کار اضافه‌ای انجام نمی‌دهد (۰ توکن).
+    ۳. فقط کالاهای بدون مشخصات این دسته با DeepSeek استعلام شده و در لحظه برای کاربر نمایش داده می‌شوند.
+    ۴. نتیجه استخراج‌شده به صورت همزمان برای همیشه در کاتالوگ ذخیره می‌شود تا دفعات بعدی دیگر نیازی به هوش مصنوعی نباشد.
     """
-    if not product or product_has_specs(product):
+    if not product:
+        return False
+
+    # محدودیت قطعی: استفاده از API دیپ‌سیک منحصراً برای دسته «لوازم ریز» مجاز است
+    if not is_small_appliance(product):
+        return False
+
+    if product_has_specs(product):
         return False
 
     api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
@@ -339,20 +395,18 @@ def main():
     is_dict = isinstance(catalog_data, dict)
     products = list(catalog_data.values()) if is_dict else catalog_data
 
-    # شناسایی کالاهایی که نیاز به تکمیل مشخصات دارند
+    # شناسایی کالاهایی که نیاز به تکمیل مشخصات دارند (منحصراً برای دسته لوازم ریز)
     candidates = []
     for p in products:
+        # قانون انحصاری: استفاده از API دیپ‌سیک فقط و فقط برای دسته «لوازم ریز» مجاز است
+        if not is_small_appliance(p):
+            continue
+
         # اگر قبلاً با هوش مصنوعی تکمیل شده باشد، رد شو (One-time rule)
         if p.get("ai_specs"):
             continue
 
-        # اگر کالایی قبلاً ستون‌های کامل فنی (مانند تلویزیون و کولر و...) دارد، نیازی به مصرف توکن ندارد
-        has_native_specs = bool(
-            p.get("panel") or p.get("assembly") or p.get("resolution") or 
-            p.get("temp_range") or p.get("key_features") or p.get("plan") or 
-            p.get("capacity_kg") or p.get("baskets")
-        )
-        if has_native_specs:
+        if product_has_specs(p):
             continue
 
         candidates.append(p)
