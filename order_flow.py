@@ -629,7 +629,6 @@ async def finalize_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     invoice_path = None
     out_png = f"invoices/pre_invoice_{order_code}.png"
     try:
-        import asyncio
         inv_data = build_invoice_data_from_order(order_data, prod)
         os.makedirs("invoices", exist_ok=True)
         invoice_path = await asyncio.to_thread(generate_invoice_png, inv_data, output_path=out_png, is_pre_invoice=True)
@@ -934,7 +933,8 @@ def get_order_conversation_handler() -> ConversationHandler:
         fallbacks=[
             CommandHandler("cancel", cancel_conversation),
             CallbackQueryHandler(cancel_and_handle_nav_callback, pattern=nav_pattern)
-        ]
+        ],
+        per_message=False
     )
 
 def get_receipt_conversation_handler() -> ConversationHandler:
@@ -950,5 +950,6 @@ def get_receipt_conversation_handler() -> ConversationHandler:
         fallbacks=[
             CommandHandler("cancel", cancel_conversation),
             CallbackQueryHandler(cancel_and_handle_nav_callback, pattern=nav_pattern)
-        ]
+        ],
+        per_message=False
     )

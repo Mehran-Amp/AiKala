@@ -408,7 +408,6 @@ async def admin_sync_catalog_stock(update: Update, context: ContextTypes.DEFAULT
         except Exception:
             pass
 
-    import asyncio
     try:
         from sync_catalog import run_full_catalog_and_category_sync
         res = await asyncio.to_thread(run_full_catalog_and_category_sync)
@@ -846,7 +845,6 @@ async def setphoto_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     pid = str(args[0]).strip()
-    from photo_service import VERIFIED_PRODUCT_PHOTOS
 
     # بررسی نام محصول از کاتالوگ در صورت امکان
     pname = f"کالای {pid}"
@@ -1291,7 +1289,6 @@ async def admin_channel_monitor_menu(update: Update, context: ContextTypes.DEFAU
         pass
 
     try:
-        from database import Database
         _db = Database()
         db_total = await _db.get_channel_reposts_count()
         if db_total > total_reposted:
@@ -1424,7 +1421,6 @@ async def handle_admin_channel_add_input(update: Update, context: ContextTypes.D
         pass
 
     try:
-        from database import Database
         _db = Database()
         await _db.add_monitored_channel(cid, channel_name=cid)
     except Exception as e:
@@ -1530,7 +1526,6 @@ async def admin_delete_channel_handler(update: Update, context: ContextTypes.DEF
         pass
 
     try:
-        from database import Database
         _db = Database()
         await _db.delete_monitored_channel(channel_to_del)
     except Exception as e:

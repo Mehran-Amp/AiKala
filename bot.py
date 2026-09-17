@@ -312,7 +312,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ تنظیم دستی قیمت لغو گردید.")
             return
 
-        from search_engine import _normalize_digits
         clean_num = _normalize_digits(raw_text).replace(",", "").replace(" ", "").replace("تومان", "").strip()
         if not clean_num.isdigit() or int(clean_num) <= 0:
             context.user_data["awaiting_admin_product_price"] = req
@@ -1854,6 +1853,10 @@ def main():
     logger.info("🚀 AiKala Bot is initialized and ready to run.")
 
     builder = Application.builder().token(TELEGRAM_BOT_TOKEN)
+    try:
+        builder = builder.concurrent_updates(16)
+    except Exception as e:
+        logger.warning(f"Could not enable concurrent_updates: {e}")
     try:
         from telegram.request import HTTPXRequest
         request_config = HTTPXRequest(
