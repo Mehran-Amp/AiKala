@@ -1679,6 +1679,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             pass
         if prod:
             prod["image_url"] = ""
+            prod["extra_description"] = ""
+        for p in JSON_PRODUCTS:
+            if str(p.get("product_id")) == str(pid):
+                p["image_url"] = ""
+                p["extra_description"] = ""
 
         await query.answer("✅ تصویر این کالا حذف شد.", show_alert=True)
         await query.message.reply_text(

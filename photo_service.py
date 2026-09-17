@@ -110,6 +110,13 @@ def remove_verified_product_photo(pid: str) -> bool:
     if removed:
         save_verified_photos()
         logger.info(f"🗑 [PHOTOS] Removed verified photo mapping for product PID: {clean_pid}")
+        try:
+            from search_engine import JSON_PRODUCTS
+            for p in JSON_PRODUCTS:
+                if str(p.get("product_id", "")).strip().lower() == clean_pid.lower():
+                    p["extra_description"] = ""
+        except Exception:
+            pass
     return removed
 
 # ─── سیستم هوشمند شناسایی و ارجاع تصاویر مدل‌های مشابه ───

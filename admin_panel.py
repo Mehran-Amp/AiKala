@@ -1194,7 +1194,7 @@ async def handle_admin_photo_link_input(update: Update, context: ContextTypes.DE
         pass
 
     clean_caption = clean_channel_caption(detected_caption) if detected_caption else ""
-    if prod_obj and clean_caption:
+    if prod_obj:
         prod_obj["extra_description"] = clean_caption
 
     save_verified_product_entry(
