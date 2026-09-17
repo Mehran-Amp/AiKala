@@ -32,6 +32,7 @@ try:
 except ImportError:
     config = None
 
+ADMIN_IDS = getattr(config, "ADMIN_IDS", [])
 PHOTOS_CHANNEL = getattr(config, "PHOTOS_CHANNEL", getattr(config, "PHOTO_CHANNEL", getattr(config, "IMAGE_CHANNEL", getattr(config, "IMAGES_CHANNEL", os.getenv("PHOTOS_CHANNEL", "@Aikala_Image")))))
 
 from search_engine import (
@@ -93,6 +94,23 @@ def clear_verified_photos() -> int:
     save_verified_photos()
     logger.info(f"🗑 [PHOTOS] Cleared {count} verified product photos.")
     return count
+
+def remove_verified_product_photo(pid: str) -> bool:
+    """حذف پیوند تصویر و آلبوم تایید شده برای یک محصول خاص"""
+    global VERIFIED_PRODUCT_PHOTOS
+    clean_pid = str(pid).strip()
+    removed = False
+    if clean_pid in VERIFIED_PRODUCT_PHOTOS:
+        del VERIFIED_PRODUCT_PHOTOS[clean_pid]
+        removed = True
+    for k in list(VERIFIED_PRODUCT_PHOTOS.keys()):
+        if str(k).strip() == clean_pid or str(k).strip().lower() == clean_pid.lower():
+            del VERIFIED_PRODUCT_PHOTOS[k]
+            removed = True
+    if removed:
+        save_verified_photos()
+        logger.info(f"🗑 [PHOTOS] Removed verified photo mapping for product PID: {clean_pid}")
+    return removed
 
 # ─── سیستم هوشمند شناسایی و ارجاع تصاویر مدل‌های مشابه ───
 
@@ -1041,11 +1059,12 @@ async def send_product_card_and_photos(chat_id: int, product: dict, context: Con
 
     # اگر عکس ارسال شده باشد یا کالا لپ‌تاپ باشد، دکمه «تصاویر محصول» نمایش داده نمی‌شود
     show_photo_btn = (not photos_sent) and (not is_laptop)
+    is_admin = (chat_id in ADMIN_IDS) if ADMIN_IDS else False
 
     msg = build_boxed_product_message(product)
-    kb = product_inline_keyboard(pid, context, show_photo_button=show_photo_btn)
+    kb = product_inline_keyboard(pid, context, show_photo_button=show_photo_btn, is_admin=is_admin)
 
-    logger.info(f"📤 [DISPATCH] Sending product info box for '{p_name}' (ID: {pid}) to Chat: {chat_id} (show_photo_btn={show_photo_btn})")
+    logger.info(f"📤 [DISPATCH] Sending product info box for '{p_name}' (ID: {pid}) to Chat: {chat_id} (is_admin={is_admin}, show_photo_btn={show_photo_btn})")
 
     # اگر تصاویر آلبوم تایید شده ارسال نشد، آیا عکس وب‌سایتی تکی موجود است؟
     if not photos_sent:
@@ -1060,7 +1079,7 @@ async def send_product_card_and_photos(chat_id: int, product: dict, context: Con
                         chat_id=chat_id,
                         photo=m_obj,
                         caption=msg,
-                        reply_markup=product_inline_keyboard(pid, context, show_photo_button=False),
+                        reply_markup=product_inline_keyboard(pid, context, show_photo_button=False, is_admin=is_admin),
                         parse_mode="HTML"
                     )
                     return

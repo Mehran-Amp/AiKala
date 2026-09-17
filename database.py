@@ -41,15 +41,44 @@ class Database:
                 CREATE TABLE IF NOT EXISTS products (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     product_id TEXT UNIQUE,
-                    name TEXT NOT NULL,
+                    data_id TEXT,
+                    category_key TEXT,
+                    category_name TEXT,
+                    subcategory TEXT,
+                    name TEXT,
+                    model_number TEXT,
                     brand TEXT,
+                    size TEXT,
+                    price INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'b',
+                    assembly TEXT,
+                    score TEXT,
+                    year TEXT,
+                    resolution TEXT,
+                    panel TEXT,
+                    refresh_rate TEXT,
+                    backlight TEXT,
+                    os TEXT,
+                    capacity_btu TEXT,
+                    ac_type TEXT,
+                    temp_range TEXT,
+                    room_size TEXT,
+                    energy_consumption TEXT,
+                    performance TEXT,
+                    key_features TEXT,
+                    plan TEXT,
+                    capacity_foot TEXT,
+                    num_doors TEXT,
+                    capacity_kg TEXT,
+                    baskets TEXT,
+                    more_details TEXT,
                     category TEXT DEFAULT 'default',
-                    price TEXT,
                     colors_json TEXT DEFAULT '{}',
                     specs_json TEXT DEFAULT '{}',
                     url TEXT,
                     image_url TEXT,
                     source TEXT DEFAULT 'MomtazKalla',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -173,30 +202,55 @@ class Database:
             # ۱. بررسی و مهاجرت خودکار جدول محصولات (products)
             try:
                 p_cursor = await db.execute("PRAGMA table_info(products);")
-                p_cols = [row[1] for row in await p_cursor.fetchall()]
+                p_cols = {row[1] for row in await p_cursor.fetchall()}
                 if p_cols:
-                    if "category" not in p_cols:
-                        await db.execute("ALTER TABLE products ADD COLUMN category TEXT DEFAULT 'default';")
+                    extra_cols = [
+                        ("category", "TEXT DEFAULT 'default'"),
+                        ("category_key", "TEXT DEFAULT ''"),
+                        ("category_name", "TEXT DEFAULT ''"),
+                        ("subcategory", "TEXT DEFAULT ''"),
+                        ("data_id", "TEXT DEFAULT ''"),
+                        ("model_number", "TEXT DEFAULT ''"),
+                        ("size", "TEXT DEFAULT ''"),
+                        ("price", "INTEGER DEFAULT 0"),
+                        ("status", "TEXT DEFAULT 'b'"),
+                        ("assembly", "TEXT DEFAULT ''"),
+                        ("score", "TEXT DEFAULT ''"),
+                        ("year", "TEXT DEFAULT ''"),
+                        ("resolution", "TEXT DEFAULT ''"),
+                        ("panel", "TEXT DEFAULT ''"),
+                        ("refresh_rate", "TEXT DEFAULT ''"),
+                        ("backlight", "TEXT DEFAULT ''"),
+                        ("os", "TEXT DEFAULT ''"),
+                        ("capacity_btu", "TEXT DEFAULT ''"),
+                        ("ac_type", "TEXT DEFAULT ''"),
+                        ("temp_range", "TEXT DEFAULT ''"),
+                        ("room_size", "TEXT DEFAULT ''"),
+                        ("energy_consumption", "TEXT DEFAULT ''"),
+                        ("performance", "TEXT DEFAULT ''"),
+                        ("key_features", "TEXT DEFAULT ''"),
+                        ("plan", "TEXT DEFAULT ''"),
+                        ("capacity_foot", "TEXT DEFAULT ''"),
+                        ("num_doors", "TEXT DEFAULT ''"),
+                        ("capacity_kg", "TEXT DEFAULT ''"),
+                        ("baskets", "TEXT DEFAULT ''"),
+                        ("more_details", "TEXT DEFAULT ''"),
+                        ("colors_json", "TEXT DEFAULT '{}'"),
+                        ("specs_json", "TEXT DEFAULT '{}'"),
+                        ("url", "TEXT DEFAULT ''"),
+                        ("image_url", "TEXT DEFAULT ''"),
+                        ("source", "TEXT DEFAULT 'MomtazKalla'"),
+                        ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+                    ]
+                    for col_name, col_def in extra_cols:
+                        if col_name not in p_cols:
+                            await db.execute(f"ALTER TABLE products ADD COLUMN {col_name} {col_def};")
+
+                    if "category" in p_cols or "category" not in p_cols:
                         if "category_name" in p_cols:
                             await db.execute("UPDATE products SET category = category_name WHERE (category IS NULL OR category = 'default') AND category_name IS NOT NULL;")
                         elif "category_key" in p_cols:
                             await db.execute("UPDATE products SET category = category_key WHERE (category IS NULL OR category = 'default') AND category_key IS NOT NULL;")
-                    if "category_key" not in p_cols:
-                        await db.execute("ALTER TABLE products ADD COLUMN category_key TEXT DEFAULT '';")
-                    if "category_name" not in p_cols:
-                        await db.execute("ALTER TABLE products ADD COLUMN category_name TEXT DEFAULT '';")
-                    if "updated_at" not in p_cols:
-                        await db.execute("ALTER TABLE products ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-                    if "colors_json" not in p_cols:
-                        await db.execute("ALTER TABLE products ADD COLUMN colors_json TEXT DEFAULT '{}';")
-                    if "specs_json" not in p_cols:
-                        await db.execute("ALTER TABLE products ADD COLUMN specs_json TEXT DEFAULT '{}';")
-                    if "url" not in p_cols:
-                        await db.execute("ALTER TABLE products ADD COLUMN url TEXT DEFAULT '';")
-                    if "image_url" not in p_cols:
-                        await db.execute("ALTER TABLE products ADD COLUMN image_url TEXT DEFAULT '';")
-                    if "source" not in p_cols:
-                        await db.execute("ALTER TABLE products ADD COLUMN source TEXT DEFAULT 'MomtazKalla';")
             except Exception as e:
                 logger.warning(f"Products auto-migration note: {e}")
 

@@ -30,21 +30,12 @@ def get_product_card(prod: dict) -> str:
     """تولید کارت متنی شیک و استاندارد محصول برای ارسال در تلگرام"""
     name = prod.get("name", "")
     price = prod.get("price", 0)
-    status_raw = prod.get("status", "b")
-
-    if status_raw == "b" and price > 0:
-        status_text = "✅ موجود در انبار"
-    elif status_raw == "i":
-        status_text = "از دکمه استعلام قیمت کمک بگیر"
-    else:
-        status_text = "❌ ناموجود"
 
     cat = prod.get("category_key", "")
     lines = [
         f"🏷 **{name}**",
         "",
         f"▫️ **قیمت روز:** `{format_price(price)}`",
-        f"▫️ **وضعیت موجودی:** {status_text}",
     ]
 
     # مشخصات مو به مو بر اساس نوع کالا

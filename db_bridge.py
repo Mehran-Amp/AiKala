@@ -14,7 +14,7 @@ CATALOG_FILE = "catalog_products.json"
 CATEGORIES_FILE = "categories_tree.json"
 
 def init_product_tables():
-    """ایجاد جداول محصولات و دسته‌بندی‌های پویا"""
+    """ایجاد و تطبیق ساختار جداول محصولات و دسته‌بندی‌های پویا با قابلیت مهاجرت خودکار ستون‌ها"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -54,9 +54,67 @@ def init_product_tables():
         capacity_kg TEXT,
         baskets TEXT,
         more_details TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        colors_json TEXT DEFAULT '{}',
+        specs_json TEXT DEFAULT '{}',
+        url TEXT,
+        image_url TEXT,
+        source TEXT DEFAULT 'MomtazKalla',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
+
+    # بررسی و افزودن خودکار ستون‌های جدید در صورت وجود دیتابیس قدیمی
+    cursor.execute("PRAGMA table_info(products);")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+
+    expected_cols = [
+        ("data_id", "TEXT"),
+        ("category_key", "TEXT"),
+        ("category_name", "TEXT"),
+        ("subcategory", "TEXT"),
+        ("name", "TEXT"),
+        ("model_number", "TEXT"),
+        ("brand", "TEXT"),
+        ("size", "TEXT"),
+        ("price", "INTEGER DEFAULT 0"),
+        ("status", "TEXT DEFAULT 'b'"),
+        ("assembly", "TEXT"),
+        ("score", "TEXT"),
+        ("year", "TEXT"),
+        ("resolution", "TEXT"),
+        ("panel", "TEXT"),
+        ("refresh_rate", "TEXT"),
+        ("backlight", "TEXT"),
+        ("os", "TEXT"),
+        ("capacity_btu", "TEXT"),
+        ("ac_type", "TEXT"),
+        ("temp_range", "TEXT"),
+        ("room_size", "TEXT"),
+        ("energy_consumption", "TEXT"),
+        ("performance", "TEXT"),
+        ("key_features", "TEXT"),
+        ("plan", "TEXT"),
+        ("capacity_foot", "TEXT"),
+        ("num_doors", "TEXT"),
+        ("capacity_kg", "TEXT"),
+        ("baskets", "TEXT"),
+        ("more_details", "TEXT"),
+        ("colors_json", "TEXT DEFAULT '{}'"),
+        ("specs_json", "TEXT DEFAULT '{}'"),
+        ("url", "TEXT"),
+        ("image_url", "TEXT"),
+        ("source", "TEXT DEFAULT 'MomtazKalla'"),
+        ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+        ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+    ]
+
+    for col_name, col_type in expected_cols:
+        if col_name not in existing_cols:
+            try:
+                cursor.execute(f"ALTER TABLE products ADD COLUMN {col_name} {col_type};")
+            except Exception as e:
+                print(f"[DB] Note adding column {col_name}: {e}")
 
     # جدول درخت دسته‌بندی‌های پویا
     cursor.execute("""
@@ -70,13 +128,16 @@ def init_product_tables():
     """)
 
     # ایندکس‌های افزایش سرعت سرچ زیر ۵ میلی‌ثانیه در دیتابیس
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_prod_cat ON products(category_key);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_prod_brand ON products(brand);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_prod_model ON products(model_number);")
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_prod_cat ON products(category_key);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_prod_brand ON products(brand);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_prod_model ON products(model_number);")
+    except Exception as e:
+        print(f"[DB] Note creating indexes: {e}")
 
     conn.commit()
     conn.close()
-    print("✅ جداول دیتابیس محصولات با موفقیت مقداردهی شدند.")
+    print("✅ جداول دیتابیس محصولات با موفقیت مقداردهی و همگام‌سازی شدند.")
 
 def load_catalog_into_db():
     """وارد کردن داده‌های فایل کاتالوگ استخراج‌شده به دیتابیس"""

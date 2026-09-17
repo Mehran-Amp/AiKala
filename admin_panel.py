@@ -439,8 +439,8 @@ async def admin_sync_catalog_stock(update: Update, context: ContextTypes.DEFAULT
         err_msg = res.get("error", "خطای ارتباطی")
         result_text = (
             f"⚠️ <b>بروزرسانی کاتالوگ و دسته‌بندی‌ها با خطا مواجه شد.</b>\n"
-            f"پیام سیستم: <code>{err_msg}</code>\n"
-            f"لطفاً اتصال اینترنت سرور را بررسی فرموده و مجدداً تلاش نمایید."
+            f"پیام سیستم: <code>{err_msg}</code>\n\n"
+            f"▫️ در صورت بروز خطای ارتباطی، اتصال اینترنت سرور را بررسی فرموده و مجدداً تلاش نمایید."
         )
 
     kb = InlineKeyboardMarkup([

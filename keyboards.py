@@ -162,14 +162,6 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
     else:
         price_str = str(raw_price) if raw_price else "تماس بگیرید"
 
-    status_raw = p.get("status", "b")
-    if status_raw == "b" and (isinstance(raw_price, (int, float)) and raw_price > 0):
-        status_text = "✅ موجود در انبار"
-    elif status_raw == "i":
-        status_text = "از دکمه استعلام قیمت کمک بگیر"
-    else:
-        status_text = "❌ ناموجود"
-
     specs = p.get("specs", {})
     if isinstance(specs, str):
         try:
@@ -251,7 +243,6 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"🏷 <b>برند:</b> {brand} | 📂 <b>دسته:</b> {category}\n"
         f"💰 <b>قیمت روز:</b> {price_str}\n"
-        f"📦 <b>وضعیت موجودی:</b> {status_text}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📋 <b>مشخصات فنی کالا:</b>\n"
         f"{specs_str}\n"
@@ -262,9 +253,38 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
 
 # ─── کیبورد زیر هر کارت کالا ───
 
-def product_inline_keyboard(pid: str, context: Optional[ContextTypes.DEFAULT_TYPE] = None, show_photo_button: bool = True) -> InlineKeyboardMarkup:
-    """دکمه‌های اقدام زیر کارت کالا: استعلام قیمت و کرایه، تصاویر محصول (در صورت نبود تصویر و برای غیر لپ‌تاپ)، تماس با پشتیبانی"""
+def product_inline_keyboard(
+    pid: str,
+    context: Optional[ContextTypes.DEFAULT_TYPE] = None,
+    show_photo_button: bool = True,
+    is_admin: bool = False,
+    view_as_customer: bool = False
+) -> InlineKeyboardMarkup:
+    """دکمه‌های اقدام زیر کارت کالا:
+    - برای ادمین: کنسول اختصاصی درجا (تغییر عکس، حذف عکس، تنظیم قیمت، پنهان/نمایش، دریافت لینک سریع، مشاهده از دید مشتری)
+    - برای مشتری: استعلام قیمت و کرایه، تصاویر محصول، تماس با پشتیبانی
+    """
     pid_str = str(pid if pid is not None else "").strip()
+
+    # کنسول اختصاصی ادمین در زیر کارت کالا
+    if is_admin and not view_as_customer:
+        buttons = [
+            [
+                InlineKeyboardButton("🖼 تغییر عکس کالا", callback_data=make_safe_cb("adm_pimg", pid_str)),
+                InlineKeyboardButton("🗑 حذف عکس فعلی", callback_data=make_safe_cb("adm_pimgdel", pid_str)),
+            ],
+            [
+                InlineKeyboardButton("✏️ تنظیم دستی قیمت", callback_data=make_safe_cb("adm_pprice", pid_str)),
+                InlineKeyboardButton("👁‍🗨 پنهان / نمایش کالا", callback_data=make_safe_cb("adm_ptog", pid_str)),
+            ],
+            [
+                InlineKeyboardButton("🔗 دریافت لینک برای مشتری", callback_data=make_safe_cb("adm_plink", pid_str)),
+            ],
+            [
+                InlineKeyboardButton("👥 مشاهده از دید مشتری (تست)", callback_data=make_safe_cb("adm_pcust", pid_str)),
+            ]
+        ]
+        return InlineKeyboardMarkup(buttons)
 
     # محصولات لپ‌تاپ فاقد تصویر آلبومی هستند؛ دکمه تصاویر برای لپ‌تاپ نمایش داده نمی‌شود
     if pid_str.upper().startswith("LAP"):
@@ -281,6 +301,13 @@ def product_inline_keyboard(pid: str, context: Optional[ContextTypes.DEFAULT_TYP
         ],
         action_row
     ]
+
+    # دکمه بازگشت به پنل مدیریت در صورت تست حالت مشتری توسط ادمین
+    if is_admin and view_as_customer:
+        buttons.append([
+            InlineKeyboardButton("⚙️ بازگشت به ابزارهای مدیریت کالا", callback_data=make_safe_cb("adm_pback", pid_str))
+        ])
+
     return InlineKeyboardMarkup(buttons)
 
 def inquiry_quote_keyboard(pid: str, req_id: Any = None) -> InlineKeyboardMarkup:

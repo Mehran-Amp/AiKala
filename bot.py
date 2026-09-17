@@ -39,6 +39,7 @@ TELEGRAM_BOT_TOKEN = getattr(config, "TELEGRAM_BOT_TOKEN", os.getenv("TELEGRAM_B
 PHOTOS_CHANNEL = getattr(config, "PHOTOS_CHANNEL", getattr(config, "PHOTO_CHANNEL", getattr(config, "IMAGE_CHANNEL", getattr(config, "IMAGES_CHANNEL", os.getenv("PHOTOS_CHANNEL", "@Aikala_Image")))))
 SUPPORT_USERNAME = getattr(config, "SUPPORT_USERNAME", "@AiKala_Admin")
 ADMIN_IDS = getattr(config, "ADMIN_IDS", [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()] if os.getenv("ADMIN_IDS") else [])
+BOT_LINK = getattr(config, "BOT_LINK", os.getenv("BOT_LINK", "@AiKala_bot"))
 
 # ─── پیکربندی بهینه‌سازی‌شده و خلاصه لاگر ───
 logging.basicConfig(
@@ -80,7 +81,8 @@ from keyboards import (
     show_search_page,
     resolve_safe_cb,
     make_safe_cb,
-    inquiry_quote_keyboard
+    inquiry_quote_keyboard,
+    product_inline_keyboard
 )
 from guidbuy import show_guide_command, register_guide_handlers
 from support_service import (
@@ -95,6 +97,7 @@ from photo_service import (
     register_photo_message,
     save_channel_photos_map,
     save_verified_photos,
+    remove_verified_product_photo,
     find_matching_verified_photos,
     send_verified_photos_to_user,
     get_product_photos,
@@ -142,6 +145,22 @@ db = Database()
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     adm = is_admin(user.id)
+
+    # 🔗 بررسی دیپ‌لینک مستقیم به کارت کالا (مانند /start p_123 یا /start prod_123)
+    if context.args and len(context.args) > 0:
+        raw_arg = context.args[0].strip()
+        target_pid = ""
+        if raw_arg.startswith("p_"):
+            target_pid = raw_arg[2:].strip()
+        elif raw_arg.startswith("prod_"):
+            target_pid = raw_arg[5:].strip()
+
+        if target_pid:
+            prod = await db.get_product_by_id(target_pid) or next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(target_pid)), None)
+            if prod:
+                await send_product_card_and_photos(update.effective_chat.id, prod, context)
+                return
+
     welcome_text = (
         f"سلام <b>{user.first_name}</b> گرامی! 🌹\n"
         f"به بازرگانی و فروشگاه اینترنتی <b>AiKala</b> خوش آمدید.\n\n"
@@ -281,6 +300,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if adm and context.user_data.get("awaiting_product_image_link"):
         await handle_admin_photo_link_input(update, context)
+        return
+
+    if adm and context.user_data.get("awaiting_admin_product_price"):
+        req = context.user_data.pop("awaiting_admin_product_price")
+        pid = req.get("pid")
+        pname = req.get("product_name", pid)
+        raw_text = (update.message.text or "").strip()
+
+        if raw_text.startswith("/cancel"):
+            await update.message.reply_text("❌ تنظیم دستی قیمت لغو گردید.")
+            return
+
+        from search_engine import _normalize_digits
+        clean_num = _normalize_digits(raw_text).replace(",", "").replace(" ", "").replace("تومان", "").strip()
+        if not clean_num.isdigit() or int(clean_num) <= 0:
+            context.user_data["awaiting_admin_product_price"] = req
+            await update.message.reply_text("⚠️ لطفاً مبلغ معتبر به صورت عدد به تومان وارد فرمایید (یا /cancel را بفرستید):")
+            return
+
+        new_price = int(clean_num)
+        try:
+            await db.execute("UPDATE products SET price = ? WHERE product_id = ?", (new_price, pid))
+        except Exception as e:
+            logger.warning(f"Error updating product price in db: {e}")
+
+        for p in JSON_PRODUCTS:
+            if str(p.get("product_id")) == str(pid):
+                p["price"] = new_price
+                break
+
+        await update.message.reply_text(
+            f"✅ <b>قیمت کالا با موفقیت بروزرسانی شد:</b>\n"
+            f"🌟 <b>{pname}</b> (<code>{pid}</code>)\n"
+            f"💰 قیمت جدید: <b>{new_price:,} تومان</b>\n\n"
+            f"▫️ این قیمت بلافاصله در جستجو، کاتالوگ و کارت مشخصات کالا اعمال گردید.",
+            parse_mode="HTML"
+        )
         return
 
     if adm and context.user_data.get("awaiting_support_agent_step"):
@@ -1575,6 +1631,167 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "adm_back_panel":
         await query.answer()
         await admin_panel_command(update, context)
+
+    # ─── کنسول اختصاصی ادمین در زیر کارت کالا ───
+    elif data.startswith("adm_pimg|"):
+        if not is_admin(update.effective_user.id):
+            await query.answer("دسترسی غیرمجاز", show_alert=True)
+            return
+
+        await query.answer()
+        pid = resolve_safe_cb(data)
+        prod = await db.get_product_by_id(pid) or next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
+        pname = prod.get("name", pid) if prod else pid
+
+        context.user_data["awaiting_product_image_link"] = {
+            "pid": pid,
+            "target_uid": 0,
+            "product_name": pname
+        }
+
+        await query.message.reply_text(
+            f"🖼 <b>ارسال یا تغییر عکس کالا:</b>\n"
+            f"🌟 <b>{pname}</b> (<code>{pid}</code>)\n\n"
+            f"لطفاً <b>عکس، آلبوم تصاویر، یا لینک پست کانال</b> این محصول را ارسال یا فوروارد فرمایید.\n\n"
+            f"📌 ورودی‌های معتبر:\n"
+            f"▫️ ارسال مستقیم عکس (یا چند عکس همزمان به صورت آلبوم)\n"
+            f"▫️ فوروارد پیام از کانال عکس‌ها\n"
+            f"▫️ ارسال لینک پست (مثلاً <code>https://t.me/Aikala_Image/450</code>)\n"
+            f"▫️ ارسال شماره پست (مثلاً <code>450</code> یا <code>450-453</code>)\n\n"
+            f"💡 <i>تصویر ارسالی بلافاصله جایگزین تصویر قبلی این کالا خواهد شد.</i>\n"
+            f"❌ جهت انصراف: /cancel",
+            parse_mode="HTML"
+        )
+
+    elif data.startswith("adm_pimgdel|"):
+        if not is_admin(update.effective_user.id):
+            await query.answer("دسترسی غیرمجاز", show_alert=True)
+            return
+
+        pid = resolve_safe_cb(data)
+        prod = await db.get_product_by_id(pid) or next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
+        pname = prod.get("name", pid) if prod else pid
+
+        remove_verified_product_photo(pid)
+        try:
+            await db.execute("UPDATE products SET image_url = '' WHERE product_id = ?", (pid,))
+        except Exception:
+            pass
+        if prod:
+            prod["image_url"] = ""
+
+        await query.answer("✅ تصویر این کالا حذف شد.", show_alert=True)
+        await query.message.reply_text(
+            f"🗑 <b>تصویر کالا با موفقیت حذف گردید:</b>\n"
+            f"🌟 <b>{pname}</b> (<code>{pid}</code>)\n\n"
+            f"▫️ آلبوم و تصویر متصل به این محصول پاکسازی شد و اکنون بدون تصویر نمایش داده می‌شود.\n"
+            f"▫️ هر زمان مایل بودید می‌توانید با دکمه «🖼 تغییر عکس کالا» تصویر جدید ثبت کنید.",
+            parse_mode="HTML"
+        )
+
+    elif data.startswith("adm_pprice|"):
+        if not is_admin(update.effective_user.id):
+            await query.answer("دسترسی غیرمجاز", show_alert=True)
+            return
+
+        await query.answer()
+        pid = resolve_safe_cb(data)
+        prod = await db.get_product_by_id(pid) or next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
+        pname = prod.get("name", pid) if prod else pid
+        curr_price = prod.get("price", 0) if prod else 0
+        curr_formatted = f"{int(curr_price):,} تومان" if curr_price else "ثبت نشده"
+
+        context.user_data["awaiting_admin_product_price"] = {
+            "pid": pid,
+            "product_name": pname,
+            "current_price": curr_price
+        }
+
+        await query.message.reply_text(
+            f"✏️ <b>تنظیم دستی قیمت کالا:</b>\n"
+            f"🌟 <b>{pname}</b> (<code>{pid}</code>)\n"
+            f"▫️ قیمت فعلی: <code>{curr_formatted}</code>\n\n"
+            f"لطفاً مبلغ جدید را به <b>تومان</b> و فقط با ارقام انگلیسی وارد فرمایید:\n"
+            f"<i>(مثال: <code>54000000</code> برای ۵۴ میلیون تومان)</i>\n\n"
+            f"❌ جهت انصراف: /cancel",
+            parse_mode="HTML"
+        )
+
+    elif data.startswith("adm_ptog|"):
+        if not is_admin(update.effective_user.id):
+            await query.answer("دسترسی غیرمجاز", show_alert=True)
+            return
+
+        pid = resolve_safe_cb(data)
+        prod = await db.get_product_by_id(pid) or next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
+        pname = prod.get("name", pid) if prod else pid
+        cur_status = prod.get("status", "b") if prod else "b"
+
+        new_status = "hidden" if cur_status == "b" else "b"
+        status_label = "🔴 پنهان (مخفی از نتایج جستجو و کاتالوگ)" if new_status == "hidden" else "🟢 نمایان و فعال در فروشگاه"
+
+        if prod:
+            prod["status"] = new_status
+        try:
+            await db.execute("UPDATE products SET status = ? WHERE product_id = ?", (new_status, pid))
+        except Exception as e:
+            logger.warning(f"Error updating product status in db: {e}")
+
+        await query.answer(f"وضعیت کالا: {status_label}", show_alert=True)
+        await query.message.reply_text(
+            f"👁‍🗨 <b>وضعیت نمایش کالا تغییر یافت:</b>\n"
+            f"🌟 <b>{pname}</b> (<code>{pid}</code>)\n\n"
+            f"▫️ وضعیت فعلی: <b>{status_label}</b>",
+            parse_mode="HTML"
+        )
+
+    elif data.startswith("adm_plink|"):
+        if not is_admin(update.effective_user.id):
+            await query.answer("دسترسی غیرمجاز", show_alert=True)
+            return
+
+        await query.answer()
+        pid = resolve_safe_cb(data)
+        prod = await db.get_product_by_id(pid) or next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
+        pname = prod.get("name", pid) if prod else pid
+
+        bot_uname = str(BOT_LINK or "").replace("@", "").strip() or "AiKala_bot"
+        deep_link = f"https://t.me/{bot_uname}?start=p_{pid}"
+
+        await query.message.reply_text(
+            f"🔗 <b>لینک مستقیم اختصاصی محصول جهت ارسال به مشتری:</b>\n\n"
+            f"🌟 <b>{pname}</b>\n"
+            f"<code>{deep_link}</code>\n\n"
+            f"📋 <i>کافیست روی لینک لمس کنید تا کپی شود. مشتری با باز کردن این لینک، مستقیماً وارد ربات شده و کارت کامل مشخصات این کالا را دریافت خواهد کرد.</i>",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    elif data.startswith("adm_pcust|"):
+        if not is_admin(update.effective_user.id):
+            await query.answer("دسترسی غیرمجاز", show_alert=True)
+            return
+
+        pid = resolve_safe_cb(data)
+        await query.answer("👥 مشاهده از دید مشتری فعال شد.", show_alert=False)
+        cust_kb = product_inline_keyboard(pid, context, show_photo_button=True, is_admin=True, view_as_customer=True)
+        try:
+            await query.edit_message_reply_markup(reply_markup=cust_kb)
+        except Exception as e:
+            logger.warning(f"Failed to switch to customer view: {e}")
+
+    elif data.startswith("adm_pback|"):
+        if not is_admin(update.effective_user.id):
+            await query.answer("دسترسی غیرمجاز", show_alert=True)
+            return
+
+        pid = resolve_safe_cb(data)
+        await query.answer("⚙️ ابزارهای مدیریت کالا فعال شد.", show_alert=False)
+        admin_kb = product_inline_keyboard(pid, context, show_photo_button=True, is_admin=True, view_as_customer=False)
+        try:
+            await query.edit_message_reply_markup(reply_markup=admin_kb)
+        except Exception as e:
+            logger.warning(f"Failed to switch to admin view: {e}")
 
 # =====================================================================
 # 📡 هندلر دریافت پست‌های کانال عکس‌ها
