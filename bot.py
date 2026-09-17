@@ -636,9 +636,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 prod = await db.get_product_by_id(pid)
 
         pname = prod.get("name", "کالای انتخابی") if prod else "کالای انتخابی"
-        city = text
+        city = text.strip()
 
-        # ثبت در دیتابیس
+        # ثبت سریع در دیتابیس
         req_id = await db.create_price_inquiry(
             user_id=user.id,
             username=f"@{user.username}" if user.username else user.first_name,
@@ -647,19 +647,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             city=city
         )
 
-        # تاییدیه به مشتری
+        # تاییدیه آنی به خریدار (بدون معطلی)
         await update.message.reply_text(
             f"✅ <b>درخواست استعلام شما با موفقیت ثبت شد!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📦 <b>کالا:</b> {pname}\n"
             f"📍 <b>مقصد تحویل:</b> {city}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏳ مشخصات برای کارشناس فروش ارسال گردید.\n"
+            f"⏳ مشخصات به واحد فروش ارسال گردید.\n"
             f"قیمت قطعی روز و شرایط دقیق ارسال تا دقایقی دیگر به همراه دکمه پیش‌فاکتور در همین صفحه برای شما ارسال می‌شود.",
             parse_mode="HTML"
         )
 
-        # ارسال پیام به تمام ادمین‌ها با دکمه پاسخ و دکمه اتمام موجودی
+        # ارسال اعلان غیرمسدودکننده به ادمین‌ها در پس‌زمینه (Zero Latency برای مشتری)
         admin_kb = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("✍️ پاسخ به استعلام قیمت", callback_data=f"ans_inq|{req_id}"),
@@ -678,16 +678,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"👇 <i>جهت ارسال قیمت نهایی و شرایط ارسال برای این مشتری روی دکمه زیر کلیک نمایید:</i>"
         )
-        for admin_id in ADMIN_IDS:
-            try:
-                await context.bot.send_message(
-                    chat_id=admin_id,
-                    text=admin_text,
-                    reply_markup=admin_kb,
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                logger.error(f"Failed to notify admin {admin_id}: {e}")
+
+        async def _notify_admins_async():
+            target_admins = get_all_admin_ids()
+            for admin_id in target_admins:
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=admin_text,
+                        reply_markup=admin_kb,
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.debug(f"Notification to admin {admin_id} skipped: {e}")
+
+        asyncio.create_task(_notify_admins_async())
         return
 
     if text == "🔍 جستجوی کالا":
@@ -895,7 +900,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await show_search_page(update, context, products, page)
 
     elif data.startswith("inq|"):
-        await query.answer()
         pid = resolve_safe_cb(data)
         prod = next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
         if not prod:
@@ -905,13 +909,115 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["awaiting_inquiry_pid"] = pid
         context.user_data["awaiting_inquiry_prod"] = prod
 
+        # ساخت دکمه‌های سریع برای انتخاب شهرهای پرتقاضا + دکمه لغو
+        city_kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("تهران", callback_data=f"inq_city|{pid}|تهران"),
+                InlineKeyboardButton("اصفهان", callback_data=f"inq_city|{pid}|اصفهان"),
+                InlineKeyboardButton("مشهد", callback_data=f"inq_city|{pid}|مشهد"),
+            ],
+            [
+                InlineKeyboardButton("شیراز", callback_data=f"inq_city|{pid}|شیراز"),
+                InlineKeyboardButton("تبریز", callback_data=f"inq_city|{pid}|تبریز"),
+                InlineKeyboardButton("کرج", callback_data=f"inq_city|{pid}|کرج"),
+            ],
+            [
+                InlineKeyboardButton("❌ انصراف از استعلام", callback_data="cancel_inq")
+            ]
+        ])
+
         msg_prompt = (
             f"💰 <b>استعلام قیمت تمام‌شده و کرایه کالا:</b>\n"
             f"📦 <b>{pname}</b>\n\n"
-            f"🏙 لطفاً <b>استان و شهر مقصد تحویل</b> را تایپ و ارسال فرمایید:\n"
-            f"<i>(مثال: تهران - تهران یا اصفهان - کاشان)</i>"
+            f"🏙 لطفاً <b>شهر مقصد تحویل</b> را از گزینه‌های زیر لمس فرمایید، یا نام شهر خود را به صورت متنی تایپ و ارسال نمایید:\n"
+            f"<i>(مثال: قم، اهواز، کرمان یا تهران - تهران)</i>"
         )
-        await query.message.reply_text(msg_prompt, parse_mode="HTML")
+        # اجرای موازی answer و reply_text جهت دریافت بازخورد آنی کاربر بدون معطلی شبکه
+        await asyncio.gather(
+            query.answer("⏳ لطفاً شهر مقصد را انتخاب یا تایپ فرمایید...", show_alert=False),
+            query.message.reply_text(msg_prompt, reply_markup=city_kb, parse_mode="HTML")
+        )
+
+    elif data.startswith("inq_city|"):
+        parts = data.split("|", 2)
+        if len(parts) >= 3:
+            pid = parts[1]
+            city = parts[2]
+            prod = next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
+            if not prod:
+                prod = await db.get_product_by_id(pid)
+            pname = prod.get("name", "کالای انتخابی") if prod else "کالای انتخابی"
+            user = query.from_user
+
+            context.user_data.pop("awaiting_inquiry_pid", None)
+            context.user_data.pop("awaiting_inquiry_prod", None)
+
+            # ثبت سریع در دیتابیس
+            req_id = await db.create_price_inquiry(
+                user_id=user.id,
+                username=f"@{user.username}" if user.username else user.first_name,
+                product_id=str(pid),
+                product_name=pname,
+                city=city
+            )
+
+            await asyncio.gather(
+                query.answer("✅ استعلام شما با موفقیت ثبت شد."),
+                query.message.reply_text(
+                    f"✅ <b>درخواست استعلام شما با موفقیت ثبت شد!</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📦 <b>کالا:</b> {pname}\n"
+                    f"📍 <b>مقصد تحویل:</b> {city}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⏳ مشخصات به واحد فروش ارسال گردید.\n"
+                    f"قیمت قطعی روز و شرایط دقیق ارسال تا دقایقی دیگر به همراه دکمه پیش‌فاکتور در همین صفحه برای شما ارسال می‌شود.",
+                    parse_mode="HTML"
+                )
+            )
+
+            admin_kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✍️ پاسخ به استعلام قیمت", callback_data=f"ans_inq|{req_id}"),
+                    InlineKeyboardButton("❌ اتمام موجودی", callback_data=f"out_of_stock|{req_id}")
+                ]
+            ])
+            user_info = f"@{user.username}" if user.username else user.first_name
+            catalog_price = prod.get("price", "درج نشده") if prod else "درج نشده"
+            admin_text = (
+                f"🔔 <b>درخواست جدید استعلام قیمت تمام‌شده و کرایه!</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"📦 <b>کالا:</b> {pname} (کد: <code>{pid}</code>)\n"
+                f"🏷 <b>قیمت اولیه در کاتالوگ/کانال:</b> <b>{catalog_price}</b>\n"
+                f"📍 <b>مقصد تحویل خریدار:</b> <b>{city}</b>\n"
+                f"👤 <b>مشتری:</b> {user.full_name} ({user_info} | شناسه: <code>{user.id}</code>)\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"👇 <i>جهت ارسال قیمت نهایی و شرایط ارسال برای این مشتری روی دکمه زیر کلیک نمایید:</i>"
+            )
+
+            async def _notify_admins_async():
+                target_admins = get_all_admin_ids()
+                for admin_id in target_admins:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=admin_id,
+                            text=admin_text,
+                            reply_markup=admin_kb,
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        logger.debug(f"Notification to admin {admin_id} skipped: {e}")
+
+            asyncio.create_task(_notify_admins_async())
+        return
+
+    elif data == "cancel_inq":
+        context.user_data.pop("awaiting_inquiry_pid", None)
+        context.user_data.pop("awaiting_inquiry_prod", None)
+        await asyncio.gather(
+            query.answer("❌ لغو شد."),
+            query.message.reply_text("❌ درخواست استعلام لغو گردید. در صورت تمایل می‌توانید کالای دیگری را جستجو فرمایید.")
+        )
+        return
 
     elif data.startswith("ans_inq|"):
         await query.answer()
