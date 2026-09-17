@@ -180,8 +180,38 @@ if not TARGET_IMAGE_CHANNEL.startswith("@") and not str(TARGET_IMAGE_CHANNEL).st
 BOT_TOKEN = getattr(config, "TELEGRAM_BOT_TOKEN", os.getenv("TELEGRAM_BOT_TOKEN", ""))
 
 STATE_FILE = "monitor_state.json"
-CHECK_INTERVAL_SECONDS = 12 * 3600  # ۱۲ ساعت یک‌بار (۴۳۲۰۰ ثانیه)
 DEFAULT_HISTORY_DAYS = 120          # ۴ ماه گذشته (۱۲۰ روز)
+
+# ─── زمان‌بندی شبانه (یک‌بار در ۲۴ ساعت بین ساعات ۰۲:۰۰ الی ۰۵:۰۰ بامداد به وقت تهران) ───
+TEHRAN_TZ = timezone(timedelta(hours=3, minutes=30))
+NIGHT_WINDOW_START_HOUR = 2   # آغاز بازه شبانه: ۰۲:۰۰ بامداد
+NIGHT_WINDOW_END_HOUR = 5     # پایان بازه شبانه: ۰۵:۰۰ بامداد
+TARGET_NIGHT_HOUR = 2         # ساعت اجرای روزانه: ۰۲:۳۰ بامداد
+TARGET_NIGHT_MINUTE = 30
+
+def get_tehran_now() -> datetime:
+    """دریافت زمان کنونی دقیق به وقت ایران (تهران UTC+3:30)"""
+    return datetime.now(TEHRAN_TZ)
+
+def get_next_night_run_datetime(from_dt: Optional[datetime] = None) -> datetime:
+    """محاسبه دقیق زمان اجرای شبانه بعدی (ساعت 02:30 بامداد به وقت تهران)"""
+    now = from_dt or get_tehran_now()
+    target_today = now.replace(hour=TARGET_NIGHT_HOUR, minute=TARGET_NIGHT_MINUTE, second=0, microsecond=0)
+    if now < target_today:
+        return target_today
+    return target_today + timedelta(days=1)
+
+def seconds_until_next_night_run() -> float:
+    """محاسبه ثانیه‌های باقیمانده تا اجرای شبانه بعدی"""
+    now = get_tehran_now()
+    next_run = get_next_night_run_datetime(now)
+    diff = (next_run - now).total_seconds()
+    return max(0.0, diff)
+
+def is_within_night_window(dt: Optional[datetime] = None) -> bool:
+    """بررسی اینکه آیا زمان کنونی در بازه شبانه مجاز (۲ الی ۵ بامداد تهران) قرار دارد یا خیر"""
+    now = dt or get_tehran_now()
+    return NIGHT_WINDOW_START_HOUR <= now.hour < NIGHT_WINDOW_END_HOUR
 
 logger = logging.getLogger("ChannelMonitor")
 if not logger.handlers:
@@ -194,7 +224,7 @@ logger.setLevel(logging.INFO)
 MONITOR_STATUS = {
     "is_running": False,
     "last_run": None,
-    "next_run": None,
+    "next_run": get_next_night_run_datetime().strftime("%Y-%m-%d %H:%M:%S (تهران)"),
     "total_reposted": 0,
     "current_channel": None,
     "errors_count": 0,
@@ -775,8 +805,10 @@ async def sync_all_monitored_channels(days: int = DEFAULT_HISTORY_DAYS) -> Dict[
         # فاصله کوتاه بین کانال‌ها
         await asyncio.sleep(3.0)
 
-    MONITOR_STATUS["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    MONITOR_STATUS["next_run"] = (datetime.now() + timedelta(seconds=CHECK_INTERVAL_SECONDS)).strftime("%Y-%m-%d %H:%M:%S")
+    now_t = get_tehran_now()
+    next_t = get_next_night_run_datetime(now_t)
+    MONITOR_STATUS["last_run"] = now_t.strftime("%Y-%m-%d %H:%M:%S (تهران)")
+    MONITOR_STATUS["next_run"] = next_t.strftime("%Y-%m-%d %H:%M:%S (تهران)")
     MONITOR_STATUS["current_channel"] = None
 
     logger.info(f"✨ [MONITOR CYCLE COMPLETED] Reposted {total_reposted_cycle} new photo posts to {TARGET_IMAGE_CHANNEL}.")
@@ -800,21 +832,68 @@ async def add_and_sync_channel(channel_username: str) -> Dict[str, Any]:
     return res
 
 
-# ─── حلقه دائمی ۱۲ ساعته برای اجرا در پس‌زمینه (Daemon Worker) ───
+# ─── حلقه دائمی زمان‌بندی شبانه (Daemon Worker) ───
+
+async def sleep_gracefully(total_seconds: float, slice_seconds: float = 60.0):
+    """خواب در فواصل زمانی کوتاه تا امکان هندل کردن سیگنال‌ها و خروج ایمن همیشه میسر باشد"""
+    remaining = total_seconds
+    while remaining > 0:
+        step = min(remaining, slice_seconds)
+        await asyncio.sleep(step)
+        remaining -= step
+
 
 async def run_channel_monitor_loop():
-    """حلقه بی‌نهایت و ایمن سرویس مانیتورینگ کانال‌ها (اجرا هر ۱۲ ساعت)"""
+    """حلقه زمان‌بندی خودکار شبانه پایش کانال‌ها (یک‌بار در ۲۴ ساعت در دل شب):
+    - اجرای خودکار منحصراً بین ساعات ۰۲:۰۰ الی ۰۵:۰۰ بامداد به وقت تهران (هدف: ساعت ۰۲:۳۰ بامداد)
+    - در تمام ساعات روز در حالت استندبای و خواب کامل قرار دارد تا هیچ بار پردازشی یا افت سرعتی برای ربات ایجاد نشود.
+    """
     MONITOR_STATUS["is_running"] = True
-    logger.info(f"🚀 [MONITOR SERVICE STARTED] Periodic 12-hour scanner initialized. Target: {TARGET_IMAGE_CHANNEL}")
+    next_night = get_next_night_run_datetime()
+    MONITOR_STATUS["next_run"] = next_night.strftime("%Y-%m-%d %H:%M:%S (تهران)")
+    logger.info(
+        f"🌙 [NIGHTLY MONITOR STARTED] Scheduled ONCE per 24 hours between 02:00 and 05:00 AM (Tehran). "
+        f"Next execution target: {MONITOR_STATUS['next_run']}. Standby mode active during daytime."
+    )
+
+    last_executed_night_date: Optional[str] = None
 
     while True:
-        try:
-            await sync_all_monitored_channels(days=DEFAULT_HISTORY_DAYS)
-        except Exception as e:
-            logger.error(f"❌ Error in channel monitor main cycle: {e}")
+        now_tehran = get_tehran_now()
+        today_date_str = now_tehran.strftime("%Y-%m-%d")
 
-        logger.info(f"⏰ [MONITOR SLEEP] Sleeping for 12 hours ({CHECK_INTERVAL_SECONDS} seconds) until next check...")
-        await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+        # آیا هم‌اکنون در بازه نیمه‌شب (۲ تا ۵ بامداد) هستیم و امشب هنوز اجرا نشده است؟
+        if is_within_night_window(now_tehran) and last_executed_night_date != today_date_str:
+            logger.info(
+                f"🌕 [MIDNIGHT SYNC TRIGGERED] Current Tehran time: {now_tehran.strftime('%H:%M:%S')}. "
+                f"Starting once-daily night sync cycle for all monitored channels..."
+            )
+            try:
+                await sync_all_monitored_channels(days=DEFAULT_HISTORY_DAYS)
+                last_executed_night_date = today_date_str
+            except Exception as e:
+                logger.error(f"❌ Error in nightly channel sync cycle: {e}")
+
+            # پس از پایان اجرای شبانه، محاسبه زمان انتظار تا فردا شب ساعت ۰۲:۳۰
+            next_night = get_next_night_run_datetime()
+            MONITOR_STATUS["next_run"] = next_night.strftime("%Y-%m-%d %H:%M:%S (تهران)")
+            wait_seconds = seconds_until_next_night_run()
+            hours_wait = wait_seconds / 3600.0
+            logger.info(
+                f"😴 [NIGHT SYNC FINISHED] Sleeping for ~{hours_wait:.1f} hours until tomorrow night's run at {MONITOR_STATUS['next_run']}..."
+            )
+            await sleep_gracefully(wait_seconds)
+        else:
+            # خارج از بازه شبانه، یا امشب اجرا شده است: استندبای و خواب سبک تا فرارسیدن ساعت ۰۲:۳۰ بامداد
+            wait_seconds = seconds_until_next_night_run()
+            next_night = get_next_night_run_datetime()
+            MONITOR_STATUS["next_run"] = next_night.strftime("%Y-%m-%d %H:%M:%S (تهران)")
+            hours_wait = wait_seconds / 3600.0
+            logger.info(
+                f"☀️ [DAYTIME STANDBY] Outside night window (Tehran time: {now_tehran.strftime('%H:%M:%S')}). "
+                f"Standing by for ~{hours_wait:.1f} hours until midnight run at {MONITOR_STATUS['next_run']}. (Zero bot latency)"
+            )
+            await sleep_gracefully(wait_seconds)
 
 
 def main():

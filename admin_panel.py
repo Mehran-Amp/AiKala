@@ -1310,8 +1310,8 @@ async def admin_channel_monitor_menu(update: Update, context: ContextTypes.DEFAU
     else:
         ch_lines.append("<i>هیچ کانالی در حال حاضر متصل نیست.</i>")
 
-    last_run_str = MONITOR_STATUS.get("last_run") or "در انتظار اولین اجرا"
-    next_run_str = MONITOR_STATUS.get("next_run") or "هر ۱۲ ساعت یک‌بار"
+    last_run_str = MONITOR_STATUS.get("last_run") or "در انتظار اولین اجرای شبانه"
+    next_run_str = MONITOR_STATUS.get("next_run") or "ساعت ۰۲:۳۰ بامداد (به وقت تهران)"
 
     text = (
         f"📡 <b>مرکز پایش خودکار کانال‌ها و گالری تصاویر</b>\n"
@@ -1321,10 +1321,12 @@ async def admin_channel_monitor_menu(update: Update, context: ContextTypes.DEFAU
         f"📸 <b>فیلتر محتوا:</b> فقط پست‌های حاوی عکس (تک‌عکس و آلبوم)\n"
         f"💎 <b>حفظ ساختار:</b> نگهداری ۱۰۰٪ متن، کپشن، مشخصات و چیدمان آلبوم\n"
         f"🚫 <b>جلوگیری از تکرار:</b> ممانعت قطعی از انتشار هرگونه پست تکراری\n"
-        f"⏱ <b>بررسی خودکار:</b> هر ۱۲ ساعت یک‌بار (پست‌های جدید)\n"
+        f"⏱ <b>زمان‌بندی پایش:</b> ۱ بار در ۲۴ ساعت (نصف‌شب بین ۰۲:۰۰ الی ۰۵:۰۰ بامداد به وقت تهران)\n"
+        f"🚀 <b>سرعت ربات در طول روز:</b> ۱۰۰٪ آزاد و بدون بار پردازشی (حالت استندبای)\n"
         f"⏳ <b>محدوده بررسی اولیه:</b> ۴ ماه گذشته (۱۲۰ روز)\n"
         f"📊 <b>مجموع پست‌های ریپوست‌شده تاکنون:</b> <b>{total_reposted} پست</b>\n"
         f"🕒 <b>آخرین پویش:</b> {last_run_str}\n"
+        f"⏰ <b>پویش بعدی:</b> {next_run_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📋 <b>کانال‌های تحت پایش فعال:</b>\n" +
         "\n".join(ch_lines)
@@ -1434,7 +1436,7 @@ async def handle_admin_channel_add_input(update: Update, context: ContextTypes.D
         f"▫️ فقط پست‌های حاوی عکس (تک‌عکس و آلبوم)\n"
         f"▫️ بدون حذف هیچ کلمه یا شماره‌ای از کپشن\n"
         f"▫️ انتشار مستقیم با مالکیت اختصاصی کانال <code>{TARGET_IMAGE_CHANNEL}</code>\n"
-        f"▫️ بررسی مجدد خودکار هر ۱۲ ساعت یک‌بار\n\n"
+        f"▫️ بررسی مجدد خودکار: ۱ بار در ۲۴ ساعت (نصف‌شب بین ساعت ۲ الی ۵ بامداد)\n\n"
         f"<i>عملیات در پس‌زمینه در جریان است و نیازی به توقف یا انتظار نیست.</i>",
         parse_mode="HTML"
     )
@@ -1461,7 +1463,7 @@ async def admin_sync_channels_all(update: Update, context: ContextTypes.DEFAULT_
         f"📡 تمام کانال‌های تحت پایش در نوبت بررسی قرار گرفتند.\n"
         f"📸 پست‌های عکس‌دار (آلبوم‌ها و تک‌عکس‌ها) ۴ ماه گذشته استخراج و با مالکیت کامل کانال <code>{TARGET_IMAGE_CHANNEL}</code> ریپوست خواهند شد.\n"
         f"🚫 پست‌های تکراری به صورت هوشمند شناسایی و صرف‌نظر می‌شوند.\n"
-        f"⏱ این پایش هر ۱۲ ساعت یک‌بار نیز به صورت خودکار اجرا می‌گردد."
+        f"⏱ پایش خودکار شبانه: ۱ بار در شبانه‌روز (ساعت ۲ الی ۵ بامداد به وقت تهران)."
     )
 
     kb = InlineKeyboardMarkup([
