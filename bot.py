@@ -366,6 +366,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if handled:
             return
 
+    if adm and context.user_data.get("awaiting_ai_key_provider"):
+        from admin_panel import handle_admin_ai_key_input
+        handled = await handle_admin_ai_key_input(update, context)
+        if handled:
+            return
+
     # ─── پردازش و بررسی فوری فایل‌های اکسل یا CSV ارسالی ───
     photo = update.message.photo[-1] if update.message.photo else None
     doc = update.message.document
@@ -1714,6 +1720,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         target_provider = data.replace("adm_ai_set_", "").strip()
         await admin_ai_set_provider_handler(update, context, target_provider)
 
+    elif data.startswith("adm_ai_key_"):
+        provider = data.replace("adm_ai_key_", "").strip()
+        from admin_panel import admin_ai_key_prompt
+        await admin_ai_key_prompt(update, context, provider)
+
+    elif data == "adm_ai_test":
+        from admin_panel import admin_ai_test_handler
+        await admin_ai_test_handler(update, context)
+
     # ─── بخش پشتیبان‌گیری و بازگردانی کلی سیستم ───
     elif data == "adm_backup_menu":
         await admin_backup_menu(update, context)
@@ -2146,6 +2161,40 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode="HTML",
             disable_web_page_preview=True
         )
+
+    elif data.startswith("adm_paispec|"):
+        if not is_admin(update.effective_user.id):
+            await query.answer("دسترسی غیرمجاز", show_alert=True)
+            return
+
+        pid = resolve_safe_cb(data)
+        await query.answer("🤖 در حال استعلام مشخصات با هوش مصنوعی... لطفاً شکیبا باشید.", show_alert=False)
+
+        prod = await db.get_product_by_id(pid) or next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
+        if not prod:
+            await query.message.reply_text("❌ کالا در سیستم یافت نشد.")
+            return
+
+        from gemini_enricher import async_enrich_product_with_gemini_on_demand
+        success, err = await async_enrich_product_with_gemini_on_demand(prod, force=True, return_error=True)
+
+        if success:
+            updated_msg = build_boxed_product_message(prod)
+            adm_kb = product_inline_keyboard(pid, context, show_photo_button=True, is_admin=True, view_as_customer=False)
+            try:
+                if query.message.caption is not None:
+                    await query.edit_message_caption(caption=updated_msg, reply_markup=adm_kb, parse_mode="HTML")
+                else:
+                    await query.edit_message_text(text=updated_msg, reply_markup=adm_kb, parse_mode="HTML")
+            except Exception:
+                await query.message.reply_text(updated_msg, reply_markup=adm_kb, parse_mode="HTML")
+            await query.message.reply_text("✅ <b>مشخصات فنی کالا با موفقیت توسط هوش مصنوعی استخراج و در سیستم ذخیره گردید.</b>", parse_mode="HTML")
+        else:
+            await query.message.reply_text(
+                f"⚠️ <b>عدم دریافت مشخصات توسط هوش مصنوعی:</b>\n{err}\n\n"
+                f"💡 راهنما: لطفاً در بخش «تنظیمات هوش مصنوعی» کلید API معتبر (Gemini یا DeepSeek) را ثبت و دکمه «تست زنده ارتباط» را بررسی نمایید.",
+                parse_mode="HTML"
+            )
 
     elif data.startswith("adm_pcust|"):
         if not is_admin(update.effective_user.id):

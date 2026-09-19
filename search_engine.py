@@ -427,30 +427,19 @@ def load_json_products(file_path: Optional[str] = None):
                     if p.get("num_doors"): specs_dict["تعداد درب"] = p["num_doors"]
                     if p.get("capacity_kg"): specs_dict["ظرفیت شستشو"] = f"{p['capacity_kg']} کیلوگرم"
                     if p.get("baskets"): specs_dict["تعداد سبد"] = p["baskets"]
-                    if p.get("subcategory"): specs_dict["زیرشاخه"] = p["subcategory"]
-                    if p.get("score"): specs_dict["امتیاز کیفی"] = f"⭐️ {p['score']} از ۱۰"
+                    if p.get("power"): specs_dict["توان مصرفی"] = p["power"]
+                    if p.get("capacity"): specs_dict["ظرفیت"] = p["capacity"]
                     if p.get("ai_specs") and isinstance(p["ai_specs"], dict):
                         for k, v in p["ai_specs"].items():
-                            if k not in ["ضمانت اصالت", "گارانتی", "گارانتی و مهلت تست"]:
+                            if k not in ["زیرشاخه", "دسته‌بندی", "دسته", "امتیاز کیفی", "امتیاز", "ضمانت اصالت", "گارانتی", "گارانتی و مهلت تست", "مهلت تست و تعویض"]:
                                 specs_dict[k] = v
-
-                    is_lp = (
-                        p.get("category_key") == "laptop"
-                        or p.get("category") in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"]
-                        or p.get("category_name") in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"]
-                        or str(p.get("product_id") or "").upper().startswith("LAP")
-                        or any(w in str(p.get("name") or "").lower() for w in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"])
-                    )
-                    if is_lp:
-                        specs_dict["گارانتی و مهلت تست"] = "یک هفته ضمانت تست و تعویض"
-                    else:
-                        specs_dict["ضمانت اصالت"] = "۱۰۰٪ اورجینال با تضمین کتبی"
-                        specs_dict["گارانتی"] = "۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش"
 
                     if specs_dict:
                         p["specs"] = specs_dict
                     elif p.get("more_details"):
-                        p["specs"] = {"مشخصات کلیدی": p["more_details"]}
+                        md = str(p["more_details"]).strip()
+                        if md and len(md) > 10 and (md.count("|") >= 1 or md.count(":") >= 1):
+                            p["specs"] = {"مشخصات کلیدی": md}
 
                 # فرمت خوانای قیمت تومان
                 price_val = p.get("price", 0)

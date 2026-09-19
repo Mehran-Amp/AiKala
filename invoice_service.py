@@ -49,24 +49,39 @@ COLOR_BLUE_BG = (240, 249, 255)    # #F0F9FF
 COLOR_BLUE_BORDER = (186, 230, 253) # #BAE6FD
 
 try:
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw, ImageFont, features
     HAS_PIL = True
-except ImportError:
+    HAS_RAQM = bool(features.check("raqm"))
+except Exception:
     HAS_PIL = False
+    HAS_RAQM = False
 
 try:
     import arabic_reshaper
     from bidi.algorithm import get_display
-    def fa(text: str) -> str:
-        if not text:
-            return ""
-        try:
-            return get_display(arabic_reshaper.reshape(str(text)))
-        except Exception:
-            return str(text)
+    HAS_RESHAPER = True
 except ImportError:
-    def fa(text: str) -> str:
-        return str(text) if text else ""
+    HAS_RESHAPER = False
+
+def fa(text: str) -> str:
+    """
+    مبدل و تطبیق‌دهنده متن فارسی برای چیدمان راست‌به‌چپ (RTL):
+    - در صورتی که کتابخانه Pillow دارای موتور Raqm (HarfBuzz + FriBidi) باشد،
+      متن فارسی به طور مستقیم، با بالاترین کیفیت، اتصال کامل حروف و اعمال خودکار جهت RTL رندر می‌شود.
+      پیش‌پردازش arabic_reshaper + bidi در حضور Raqm سبب معکوس شدن دوباره حروف کلمات و جدا شدن حروف می‌شود.
+    - در صورتی که Raqm در محیط فعال نباشد (Fallback)، از ترکیب arabic_reshaper و python-bidi استفاده می‌شود.
+    """
+    if not text:
+        return ""
+    s = str(text)
+    if HAS_RAQM:
+        return s
+    if HAS_RESHAPER:
+        try:
+            return get_display(arabic_reshaper.reshape(s))
+        except Exception:
+            return s
+    return s
 
 try:
     import qrcode
@@ -302,7 +317,7 @@ def generate_invoice_png(order_data: dict, output_path: str = "invoice.png", is_
         draw.text((emblem_x + 22, emblem_y + 14), t_logo1, font=f_logo1, fill=WHITE)
 
         f_logo2 = _get_font(18, bold=True)
-        t_logo2 = fa("هوشـمـنـد کـالا")
+        t_logo2 = fa("هوشمند کالا")
         draw.text((emblem_x + 22, emblem_y + 48), t_logo2, font=f_logo2, fill=COLOR_MUTED)
 
         # دات نئونی هوشمند
@@ -310,8 +325,8 @@ def generate_invoice_png(order_data: dict, output_path: str = "invoice.png", is_
 
     # عنوان و اطلاعات فروشگاه در سمت راست
     raw_shop_title = order_data.get("shop_name") or SHOP_NAME
-    if not raw_shop_title or any(old in raw_shop_title for old in ["بازرگانی هوشمند کالا", "فروشگاه آی‌کالا", "فروشگاه آی کالا"]):
-        raw_shop_title = "AiKala_bot هوشمند کالا اولین فروشگاه تلگرامی لوازم خانگی و لپتاب در ایران"
+    if not raw_shop_title or any(old in raw_shop_title for old in ["بازرگانی هوشمند کالا", "فروشگاه آی‌کالا", "فروشگاه آی کالا", "AiKala_bot"]):
+        raw_shop_title = "هوشمند کالا (@AiKala_bot) | اولین فروشگاه تلگرامی لوازم خانگی و لپ‌تاپ در ایران"
     shop_title = fa(raw_shop_title)
 
     # محاسبه دقیق اندازه فونت عنوان جهت قرارگیری استاندارد و بدون تداخل با نشان تجاری سمت چپ
@@ -327,7 +342,7 @@ def generate_invoice_png(order_data: dict, output_path: str = "invoice.png", is_
     draw.text((W - PAD - tw_shop - 10, header_y + 8), shop_title, font=f_shop, fill=COLOR_DARK)
 
     f_sub = _get_font(19)
-    sub_title = fa("مرکز تخصصی لوازم خانگی و صوتی تصویری اورجینال - لپتاب با ضمانت کتبی اصالت")
+    sub_title = fa("مرکز تخصصی لوازم خانگی، صوتی تصویری و لپ‌تاپ اورجینال با ضمانت کتبی اصالت")
     tw_sub, _ = _text_size(draw, sub_title, f_sub)
     draw.text((W - PAD - tw_sub - 10, header_y + 54), sub_title, font=f_sub, fill=COLOR_GRAY)
 
@@ -343,11 +358,11 @@ def generate_invoice_png(order_data: dict, output_path: str = "invoice.png", is_
     bar_h = 56
     if is_pre_invoice:
         b_bg, b_border, b_text = COLOR_ORANGE_BG, COLOR_ORANGE_BORDER, COLOR_ORANGE_DARK
-        badge_text = fa("پـیـش‌فـاکـتـور رسـمـی خـریـد  (غـیـرقـطـعـی — در انـتـظـار بیـعـانـه)")
+        badge_text = fa("پیش‌فاکتور رسمی خرید (غیرقطعی — در انتظار بیعانه)")
         right_sub = fa("مهلت اعتبار رزرو انبار: ۵ ساعت کاری")
     else:
         b_bg, b_border, b_text = COLOR_GREEN_BG, COLOR_GREEN_BORDER, COLOR_GREEN_DARK
-        badge_text = fa("فـاکـتـور فـروش رسـمـی و قـطـعـی  (بـیـعـانـه تـایـیـد شـد)")
+        badge_text = fa("فاکتور فروش رسمی و قطعی (بیعانه تایید شد)")
         right_sub = fa("وضعیت: قطعی و تخصیص به واحد باربری")
 
     draw.rounded_rectangle([PAD, y, W - PAD, y + bar_h], radius=10, fill=b_bg, outline=b_border, width=1)
@@ -658,7 +673,7 @@ def generate_invoice_png(order_data: dict, output_path: str = "invoice.png", is_
             "۲. خریدار موظف است کالا را از لحاظ سلامت فیزیکی قبل از تسویه با باربر بررسی نماید.",
             "۳. جهت نصب و فعال سازی گارانتی محصولات، هزینه ایاب و ذهاب نصاب به عهده خریدار می باشد.",
             "۴. ارسال محصول بسته به شرایط جوی و مسافت ممکن است ۱ الی ۴ روز کاری زمان ببرد.",
-            "۵. آاگ کالا تضمین کننده AiKala هوشمند کالا و ضمانت خرید شماست."
+            "۵. هوشمند کالا (@AiKala_bot) تضمین‌کننده اصالت ۱۰۰٪ کالا و گارانتی معتبر خرید شماست."
         ]
 
         f_term_txt = _get_font(20)

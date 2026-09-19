@@ -2,5 +2,7 @@
   "provider": "gemini",
   "gemini_model": "gemini-2.5-flash",
   "deepseek_model": "deepseek-v4-flash",
-  "updated_at": "2026-09-19 15:03:12"
+  "gemini_api_key": "",
+  "deepseek_api_key": "",
+  "updated_at": "2026-09-19 15:34:16"
 }

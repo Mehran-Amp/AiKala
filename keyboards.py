@@ -153,6 +153,17 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
         brand = raw_brand if raw_brand and raw_brand not in ["ساز", "کن", "برقی", "بدون", "شارژی"] else "اورجینال شرکتی"
 
     category = p.get("category") or p.get("category_name") or "لوازم خانگی"
+    subcategory = str(p.get("subcategory") or "").strip()
+    score = str(p.get("score") or "").strip()
+
+    cat_str = category
+    if subcategory and subcategory != category:
+        cat_str = f"{category} ({subcategory})"
+
+    meta_line = f"🏷 <b>برند:</b> {brand} | 📂 <b>دسته:</b> {cat_str}"
+    if score:
+        meta_line += f" | ⭐️ امتیاز: {score}"
+
     raw_price = p.get("price", 0)
 
     if isinstance(raw_price, (int, float)) and raw_price > 0:
@@ -170,6 +181,8 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
             specs = {}
     if not isinstance(specs, dict):
         specs = {}
+    else:
+        specs = dict(specs)
 
     # اگر مشخصات در فیلدهای مستقیم کاتالوگ باشد
     if not specs:
@@ -182,19 +195,46 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
         if p.get("capacity_kg"): specs["ظرفیت"] = f"{p['capacity_kg']} کیلوگرم"
         if p.get("capacity_foot"): specs["ظرفیت"] = f"{p['capacity_foot']} فوت"
         if p.get("baskets"): specs["تعداد سبد"] = p["baskets"]
-        if p.get("subcategory"): specs["دسته‌بندی"] = p["subcategory"]
-        if p.get("score"): specs["امتیاز کیفی"] = f"⭐️ {p['score']} از ۱۰"
+        if p.get("power"): specs["توان مصرفی"] = p["power"]
+        if p.get("capacity"): specs["ظرفیت"] = p["capacity"]
 
     # اضافه کردن مشخصات تولید شده توسط هوش مصنوعی
-    if p.get("ai_specs") and isinstance(p["ai_specs"], dict):
-        for k, v in p["ai_specs"].items():
+    ai_specs = p.get("ai_specs")
+    if isinstance(ai_specs, str):
+        try:
+            ai_specs = json.loads(ai_specs)
+        except Exception:
+            ai_specs = {}
+    if ai_specs and isinstance(ai_specs, dict):
+        for k, v in ai_specs.items():
             specs[k] = v
+
+    if not ai_specs and p.get("specs_json"):
+        try:
+            sj = p["specs_json"]
+            if isinstance(sj, str):
+                sj = json.loads(sj)
+            if isinstance(sj, dict):
+                for k, v in sj.items():
+                    specs[k] = v
+        except Exception:
+            pass
+
+    # کلیدهایی که صرفاً اطلاعات عمومی/دسته‌بندی هستند و مشخصه فنی کارخانه‌ای به شمار نمی‌روند
+    NON_SPEC_KEYS = {
+        "زیرشاخه", "دسته‌بندی", "دسته", "امتیاز کیفی", "امتیاز",
+        "ضمانت اصالت", "گارانتی", "گارانتی و مهلت تست", "مهلت تست و تعویض"
+    }
 
     specs_lines = []
     if isinstance(specs, dict):
         for k, v in specs.items():
-            if v and k not in ["ضمانت اصالت", "گارانتی", "گارانتی و مهلت تست", "مهلت تست و تعویض"]:
+            if v and k not in NON_SPEC_KEYS:
                 specs_lines.append(f"▫️ <b>{k}:</b> {v}")
+
+    # اگر مشخصات فنی تخصصی هنوز استخراج نشده است
+    if not specs_lines:
+        specs_lines.append("▫️ <i>مشخصات فنی در حال تکمیل توسط هوش مصنوعی و کارشناسان فنی...</i>")
 
     # تشخیص هوشمند محصولات لپ‌تاپ جهت ارائه ضمانت متناسب
     cat_check = str(category or "").strip().lower()
@@ -208,13 +248,15 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
         or any(term in str(name).lower() for term in ["لپ‌تاپ", "لپ تاپ", "لپتاپ", "laptop"])
     )
 
+    # بخش تفکیک‌شده ضمانت و گارانتی فروشگاه
+    specs_lines.append("━━━━━━━━━━━━━━━━━━━━")
     if is_laptop:
         # برای محصولات لپتاپ: یک هفته ضمانت تست و تعویض
-        specs_lines.append("▫️ <b>گارانتی و مهلت تست:</b> یک هفته ضمانت تست و تعویض")
+        specs_lines.append("🛡 <b>گارانتی و مهلت تست:</b> یک هفته ضمانت تست و تعویض")
     else:
         # سایر محصولات (لوازم خانگی شرکتی)
-        specs_lines.append("▫️ <b>ضمانت اصالت:</b> ۱۰۰٪ اورجینال با تضمین کتبی")
-        specs_lines.append("▫️ <b>گارانتی:</b> ۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش")
+        specs_lines.append("🛡 <b>ضمانت اصالت:</b> ۱۰۰٪ اورجینال با تضمین کتبی")
+        specs_lines.append("🛡 <b>گارانتی:</b> ۱۸ ماه گارانتی شرکتی و ۵ سال خدمات پس از فروش")
 
     specs_str = "\n".join(specs_lines)
 
@@ -241,7 +283,7 @@ def build_boxed_product_message(p: Dict[str, Any]) -> str:
     msg = (
         f"🌟 <b>{name}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🏷 <b>برند:</b> {brand} | 📂 <b>دسته:</b> {category}\n"
+        f"{meta_line}\n"
         f"💰 <b>قیمت روز:</b> {price_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📋 <b>مشخصات فنی کالا:</b>\n"
@@ -278,6 +320,7 @@ def product_inline_keyboard(
                 InlineKeyboardButton("👁‍🗨 پنهان / نمایش کالا", callback_data=make_safe_cb("adm_ptog", pid_str)),
             ],
             [
+                InlineKeyboardButton("🤖 استخراج مجدد مشخصات (AI)", callback_data=make_safe_cb("adm_paispec", pid_str)),
                 InlineKeyboardButton("🔗 دریافت لینک برای مشتری", callback_data=make_safe_cb("adm_plink", pid_str)),
             ],
             [

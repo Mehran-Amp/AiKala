@@ -1564,7 +1564,14 @@ async def admin_ai_settings_menu(update: Update, context: ContextTypes.DEFAULT_T
     if not is_admin(user.id):
         return
 
-    from gemini_enricher import get_ai_settings, get_gemini_api_key, get_deepseek_api_key, get_active_provider_label
+    from gemini_enricher import (
+        get_ai_settings,
+        get_gemini_api_key,
+        get_deepseek_api_key,
+        get_active_provider_label,
+        save_ai_api_key,
+        test_ai_connection
+    )
 
     settings = get_ai_settings()
     active_provider = settings.get("provider", "gemini")
@@ -1572,8 +1579,15 @@ async def admin_ai_settings_menu(update: Update, context: ContextTypes.DEFAULT_T
     gemini_key = get_gemini_api_key()
     deepseek_key = get_deepseek_api_key()
 
-    gemini_key_status = "✅ تنظیم‌شده در .env" if gemini_key else "⚠️ ثبت‌نشده در .env"
-    deepseek_key_status = "✅ تنظیم‌شده در .env" if deepseek_key else "⚠️ ثبت‌نشده در .env"
+    def _mask(k: str) -> str:
+        if not k:
+            return "⚠️ ثبت‌نشده (فاقد کلید معتبر)"
+        if len(k) > 10:
+            return f"✅ فعال (<code>{k[:6]}...{k[-4:]}</code>)"
+        return "✅ فعال"
+
+    gemini_key_status = _mask(gemini_key)
+    deepseek_key_status = _mask(deepseek_key)
 
     provider_title = get_active_provider_label()
 
@@ -1581,22 +1595,22 @@ async def admin_ai_settings_menu(update: Update, context: ContextTypes.DEFAULT_T
         f"🤖 <b>تنظیمات هوش مصنوعی مشخصات فنی کالاها:</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📌 <b>نحوه کارکرد سامانه:</b>\n"
-        f"استخراج مشخصات کاملاً <b>تقاضامحور (On-Demand)</b> است؛ فقط در صورتی که کاربری روی کالای فاقد مشخصات کلیک کند فعال می‌شود و مشخصات دقیق مبتنی بر نام و کد مدل کارخانه را استخراج کرده و <b>یکبار برای همیشه</b> در کاتالوگ و دیتابیس ثبت می‌کند.\n\n"
+        f"استخراج مشخصات کاملاً <b>تقاضامحور (On-Demand / Lazy)</b> است؛ فقط در صورتی که کاربری روی کالای فاقد مشخصات کلیک کند، هوش مصنوعی مشخصات فنی دقیق کارخانه‌ای آن مدل را استخراج کرده و <b>یکبار برای همیشه</b> در کاتالوگ و دیتابیس ثبت می‌نماید.\n\n"
         f"▫️ <b>موتور فعال فعلی:</b>\n"
         f"<b>{provider_title}</b>\n\n"
-        f"🔑 <b>وضعیت کلیدهای API در سرور:</b>\n"
-        f"▫️ کلید جمینای (GEMINI_API_KEY): {gemini_key_status}\n"
-        f"▫️ کلید دیپ‌سیک (DEEPSEEK_API_KEY): {deepseek_key_status}\n"
+        f"🔑 <b>وضعیت کلیدهای API هوش مصنوعی:</b>\n"
+        f"▫️ کلید جمینای (Gemini): {gemini_key_status}\n"
+        f"▫️ کلید دیپ‌سیک (DeepSeek): {deepseek_key_status}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"👇 جهت فعالسازی یا تغییر موتور هوش مصنوعی، گزینه مورد نظر را انتخاب فرمایید:"
+        f"👇 برای انتخاب موتور، ثبت کلید API یا تست ارتباط زنده، دکمه‌های زیر را انتخاب نمایید:"
     )
 
     btn_gemini = InlineKeyboardButton(
-        "✅ گوگل جمینای ♊️ (فعال)" if active_provider == "gemini" else "فعالسازی گوگل جمینای (Gemini) ♊️",
+        "✅ گوگل جمینای ♊️ (فعال)" if active_provider == "gemini" else "فعالسازی گوگل جمینای ♊️",
         callback_data="adm_ai_set_gemini"
     )
     btn_deepseek = InlineKeyboardButton(
-        "✅ دیپ‌سیک 🤖 (فعال)" if active_provider == "deepseek" else "فعالسازی دیپ‌سیک (DeepSeek) 🤖",
+        "✅ دیپ‌سیک 🤖 (فعال)" if active_provider == "deepseek" else "فعالسازی دیپ‌سیک 🤖",
         callback_data="adm_ai_set_deepseek"
     )
     btn_off = InlineKeyboardButton(
@@ -1604,10 +1618,16 @@ async def admin_ai_settings_menu(update: Update, context: ContextTypes.DEFAULT_T
         callback_data="adm_ai_set_off"
     )
 
+    btn_key_gemini = InlineKeyboardButton("🔑 ثبت / ویرایش کلید Gemini", callback_data="adm_ai_key_gemini")
+    btn_key_deepseek = InlineKeyboardButton("🔑 ثبت / ویرایش کلید DeepSeek", callback_data="adm_ai_key_deepseek")
+    btn_test_ai = InlineKeyboardButton("🧪 تست زنده ارتباط با هوش مصنوعی", callback_data="adm_ai_test")
+
     kb = InlineKeyboardMarkup([
         [btn_gemini],
         [btn_deepseek],
         [btn_off],
+        [btn_key_gemini, btn_key_deepseek],
+        [btn_test_ai],
         [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
     ])
 
@@ -1643,6 +1663,147 @@ async def admin_ai_set_provider_handler(update: Update, context: ContextTypes.DE
             pass
 
     await admin_ai_settings_menu(update, context)
+
+
+async def admin_ai_key_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, provider: str):
+    """درخواست ارسال کلید API جدید از ادمین"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    clean_provider = provider.lower().strip()
+    provider_title = "Google Gemini (جمینای)" if clean_provider == "gemini" else "DeepSeek (دیپ‌سیک)"
+
+    context.user_data["awaiting_ai_key_provider"] = clean_provider
+
+    text = (
+        f"🔑 <b>ثبت / تغییر کلید API برای {provider_title}:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"لطفاً کلید اختصاصی API خود را به عنوان پیام متنی در همین ربات ارسال نمایید.\n\n"
+        f"💡 <i>نکته: کلید شما فوراً ذخیره شده و پس از ثبت، سامانه به طور خودکار آماده دریافت مشخصات فنی دقیق محصولات خواهد بود.</i>\n\n"
+        f"جهت انصراف روی دکمه زیر کلیک کنید:"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ انصراف و بازگشت", callback_data="adm_ai_settings")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+
+async def handle_admin_ai_key_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """دریافت و ذخیره‌سازی کلید ارسالی توسط ادمین"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return False
+
+    provider = context.user_data.get("awaiting_ai_key_provider")
+    if not provider:
+        return False
+
+    raw_text = (update.message.text or "").strip()
+
+    if raw_text.lower() in ["انصراف", "لغو", "cancel", "/cancel"]:
+        context.user_data.pop("awaiting_ai_key_provider", None)
+        await update.message.reply_text("❌ عملیات ثبت کلید API لغو گردید.")
+        await admin_ai_settings_menu(update, context)
+        return True
+
+    clean_key = raw_text.strip().strip('"').strip("'")
+    if len(clean_key) < 15:
+        await update.message.reply_text(
+            "⚠️ کلید وارد شده بسیار کوتاه به نظر می‌رسد و احتمالاً نامعتبر است.\n"
+            "لطفاً کلید معتبر را با دقت کپی کرده و ارسال فرمایید، یا کلمه «انصراف» را ارسال کنید."
+        )
+        return True
+
+    from gemini_enricher import save_ai_api_key, set_ai_provider
+
+    context.user_data.pop("awaiting_ai_key_provider", None)
+    ok = save_ai_api_key(provider, clean_key)
+
+    if ok:
+        set_ai_provider(provider)
+        provider_name = "Google Gemini" if provider == "gemini" else "DeepSeek"
+        await update.message.reply_text(
+            f"✅ <b>کلید API با موفقیت ثبت شد!</b>\n\n"
+            f"موتور <b>{provider_name}</b> نیز به عنوان ارائه‌دهنده فعال تنظیم گردید.\n"
+            f"اکنون می‌توانید از دکمه «تست زنده ارتباط» صحت ارتباط را آزمایش نمایید.",
+            parse_mode="HTML"
+        )
+    else:
+        await update.message.reply_text("❌ متأسفانه در ذخیره کلید خطایی رخ داد. لطفاً مجدداً امتحان کنید.")
+
+    await admin_ai_settings_menu(update, context)
+    return True
+
+
+async def admin_ai_test_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تست زنده اتصال به هوش مصنوعی و نمایش نتیجه به ادمین"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    if update.callback_query:
+        await update.callback_query.answer("در حال تست اتصال به هوش مصنوعی... لطفاً چند ثانیه شکیبا باشید.")
+
+    from gemini_enricher import test_ai_connection, get_active_provider_label
+
+    provider_label = get_active_provider_label()
+    wait_msg = None
+    if update.callback_query:
+        try:
+            wait_msg = await update.callback_query.message.reply_text(
+                f"⏳ <b>در حال برقراری ارتباط زنده با {provider_label}...</b>\nلطفاً شکیبا باشید.",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+    success, msg, elapsed = test_ai_connection()
+
+    if wait_msg:
+        try:
+            await wait_msg.delete()
+        except Exception:
+            pass
+
+    if success:
+        result_text = (
+            f"✅ <b>ارتباط با موفقیت برقرار شد!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{msg}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎉 هوش مصنوعی آماده دریافت و تکمیل خودکار مشخصات کالاها می‌باشد."
+        )
+    else:
+        result_text = (
+            f"❌ <b>خطا در برقراری ارتباط با هوش مصنوعی:</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{msg}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💡 راهنما: لطفاً از دکمه‌های ثبت کلید، کلید API معتبر خود را وارد نمایید."
+        )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 تست مجدد", callback_data="adm_ai_test")],
+        [InlineKeyboardButton("🔙 بازگشت به تنظیمات هوش مصنوعی", callback_data="adm_ai_settings")]
+    ])
+
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(result_text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(result_text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(result_text, reply_markup=kb, parse_mode="HTML")
 
 
 # =====================================================================

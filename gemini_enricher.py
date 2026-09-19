@@ -19,7 +19,7 @@ import asyncio
 import logging
 import urllib.request
 import urllib.error
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 logger = logging.getLogger("AIEnricher")
 
@@ -28,10 +28,20 @@ DB_FILE = "bot_data.db"
 AI_SETTINGS_FILE = "ai_settings.json"
 
 # تنظیمات پیش‌فرض مدل‌ها
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
-FALLBACK_GEMINI_MODEL = "gemini-1.5-flash"
-DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEFAULT_GEMINI_MODEL = "gemini-1.5-flash"
+FALLBACK_GEMINI_MODEL = "gemini-2.0-flash"
+EXTRA_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+FALLBACK_DEEPSEEK_MODEL = "deepseek-reasoner"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+# کلیدهای نامعتبر و آزمایشی سندباکس جهت جلوگیری از خطای ۴۰۰ کاذب
+DUMMY_KEYS = {
+    "AIzaSyA9sNhKxkCbyL5ic04jd3RDN8POy6V2rxc",
+    "your_api_key_here",
+    "YOUR_GEMINI_API_KEY",
+    "YOUR_DEEPSEEK_API_KEY",
+}
 
 # ─── مدیریت تنظیمات هوش مصنوعی (Gemini / DeepSeek / Off) ───
 
@@ -41,6 +51,8 @@ def get_ai_settings() -> dict:
         "provider": "gemini",  # gemini | deepseek | off
         "gemini_model": DEFAULT_GEMINI_MODEL,
         "deepseek_model": DEFAULT_DEEPSEEK_MODEL,
+        "gemini_api_key": "",
+        "deepseek_api_key": "",
         "updated_at": ""
     }
     if os.path.exists(AI_SETTINGS_FILE):
@@ -83,7 +95,71 @@ def get_active_provider_label() -> str:
     else:
         return "🛑 خاموش (غیرفعال)"
 
-# ─── دریافت امن کلیدهای API ───
+# ─── دریافت و ذخیره امن کلیدهای API ───
+
+def _update_env_file(key_name: str, value: str):
+    """ذخیره یا به‌روزرسانی متغیر در فایل .env"""
+    env_path = os.path.join(os.getcwd(), ".env")
+    lines = []
+    found = False
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            new_lines = []
+            for line in lines:
+                if line.strip().startswith(f"{key_name}="):
+                    new_lines.append(f'{key_name}="{value}"\n')
+                    found = True
+                else:
+                    new_lines.append(line)
+            if not found:
+                new_lines.append(f'{key_name}="{value}"\n')
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+            return
+        except Exception:
+            pass
+
+    try:
+        with open(env_path, "a", encoding="utf-8") as f:
+            f.write(f'{key_name}="{value}"\n')
+    except Exception:
+        pass
+
+def save_ai_api_key(provider: str, key: str) -> bool:
+    """ذخیره کلید API برای Gemini یا DeepSeek در تنظیمات و متغیر محیطی"""
+    clean_provider = provider.lower().strip()
+    clean_key = key.strip().strip('"').strip("'")
+    settings = get_ai_settings()
+
+    if clean_provider == "gemini":
+        settings["gemini_api_key"] = clean_key
+        if clean_key:
+            os.environ["GEMINI_API_KEY"] = clean_key
+        else:
+            os.environ.pop("GEMINI_API_KEY", None)
+        _update_env_file("GEMINI_API_KEY", clean_key)
+    elif clean_provider == "deepseek":
+        settings["deepseek_api_key"] = clean_key
+        if clean_key:
+            os.environ["DEEPSEEK_API_KEY"] = clean_key
+        else:
+            os.environ.pop("DEEPSEEK_API_KEY", None)
+        _update_env_file("DEEPSEEK_API_KEY", clean_key)
+    else:
+        return False
+
+    try:
+        import datetime
+        settings["updated_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(AI_SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+        logger.info(f"🔑 [AI KEY SAVED] کلید API برای '{clean_provider}' با موفقیت ذخیره شد.")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving AI key: {e}")
+        return False
 
 def _read_key_from_env_files(key_name: str) -> str:
     """جستجوی کلید در فایل‌های .env مسیر پروژه"""
@@ -103,7 +179,7 @@ def _read_key_from_env_files(key_name: str) -> str:
                         if line.startswith(f"{key_name}="):
                             _, val = line.split("=", 1)
                             clean_val = val.strip().strip('"').strip("'")
-                            if clean_val and not clean_val.startswith("MY_"):
+                            if clean_val and not clean_val.startswith("MY_") and clean_val not in DUMMY_KEYS:
                                 os.environ[key_name] = clean_val
                                 return clean_val
             except Exception:
@@ -111,56 +187,89 @@ def _read_key_from_env_files(key_name: str) -> str:
     return ""
 
 def get_gemini_api_key() -> str:
-    """دریافت کلید API جمینای"""
-    key = os.getenv("GEMINI_API_KEY", "").strip()
-    if key and not key.startswith("MY_") and key != "your_api_key_here":
-        return key
+    """دریافت کلید API معتبر جمینای"""
+    # ۱. اولویت نخست: تنظیمات ذخیره شده توسط ادمین در ai_settings.json
+    settings = get_ai_settings()
+    custom_key = str(settings.get("gemini_api_key") or "").strip()
+    if custom_key and custom_key not in DUMMY_KEYS and not custom_key.startswith("MY_") and len(custom_key) >= 15:
+        return custom_key
 
+    # ۲. فایل‌های .env
     file_key = _read_key_from_env_files("GEMINI_API_KEY")
-    if file_key:
+    if file_key and file_key not in DUMMY_KEYS:
         return file_key
 
+    # ۳. متغیر محیطی سیستم (در صورت معتبر بودن و ساختگی نبودن)
+    env_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if env_key and env_key not in DUMMY_KEYS and not env_key.startswith("MY_") and len(env_key) >= 15:
+        return env_key
+
+    # ۴. فایل تنظیمات config.py
     try:
         import config
         c_key = getattr(config, "GEMINI_API_KEY", "").strip()
-        if c_key and not c_key.startswith("MY_"):
+        if c_key and c_key not in DUMMY_KEYS and not c_key.startswith("MY_"):
             return c_key
     except Exception:
         pass
-    return key
+
+    return ""
 
 def get_deepseek_api_key() -> str:
-    """دریافت کلید API دیپ‌سیک"""
-    key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    if key and not key.startswith("MY_") and key != "your_api_key_here":
-        return key
+    """دریافت کلید API معتبر دیپ‌سیک"""
+    # ۱. اولویت نخست: تنظیمات ذخیره شده توسط ادمین در ai_settings.json
+    settings = get_ai_settings()
+    custom_key = str(settings.get("deepseek_api_key") or "").strip()
+    if custom_key and custom_key not in DUMMY_KEYS and not custom_key.startswith("MY_") and len(custom_key) >= 15:
+        return custom_key
 
+    # ۲. فایل‌های .env
     file_key = _read_key_from_env_files("DEEPSEEK_API_KEY")
-    if file_key:
+    if file_key and file_key not in DUMMY_KEYS:
         return file_key
+
+    # ۳. متغیر محیطی سیستم
+    env_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if env_key and env_key not in DUMMY_KEYS and not env_key.startswith("MY_"):
+        return env_key
 
     try:
         import config
         c_key = getattr(config, "DEEPSEEK_API_KEY", "").strip()
-        if c_key and not c_key.startswith("MY_"):
+        if c_key and c_key not in DUMMY_KEYS and not c_key.startswith("MY_"):
             return c_key
     except Exception:
         pass
-    return key
+
+    return ""
+
+# کلیدهایی که صرفاً اطلاعات جانبی، دسته‌بندی یا گارانتی هستند و مشخصه فنی کارخانه‌ای به شمار نمی‌روند
+NON_SPEC_KEYS = {
+    "زیرشاخه", "دسته‌بندی", "دسته", "امتیاز کیفی", "امتیاز",
+    "ضمانت اصالت", "گارانتی", "گارانتی و مهلت تست", "مهلت تست و تعویض"
+}
 
 # ─── بررسی وجود مشخصات در کالا (Zero Delay / 0 Latency) ───
 
 def product_has_specs(product: dict) -> bool:
     """
-    بررسی اینکه آیا کالا از قبل مشخصات فنی معتبر دارد یا خیر.
-    در صورت داشتن مشخصات، نیازی به استعلام هوش مصنوعی نیست.
+    بررسی اینکه آیا کالا از قبل مشخصات فنی واقعی، کافی و معتبر دارد یا خیر.
+    نکته: مواردی مانند زیرشاخه، امتیاز کیفی، ضمانت اصالت و گارانتی جزء مشخصات فنی محصول نیستند
+    و حضور آنها مانع از استعلام هوش مصنوعی نخواهد شد.
     """
     if not product or not isinstance(product, dict):
         return True
 
     ai_specs = product.get("ai_specs")
-    if ai_specs and isinstance(ai_specs, dict) and len(ai_specs) > 0:
-        return True
+    if isinstance(ai_specs, str):
+        try:
+            ai_specs = json.loads(ai_specs)
+        except Exception:
+            ai_specs = {}
+    if ai_specs and isinstance(ai_specs, dict):
+        real_ai = {k: v for k, v in ai_specs.items() if k not in NON_SPEC_KEYS and v}
+        if len(real_ai) >= 2:
+            return True
 
     specs = product.get("specs")
     if isinstance(specs, str):
@@ -171,7 +280,7 @@ def product_has_specs(product: dict) -> bool:
     if isinstance(specs, dict) and len(specs) > 0:
         actual_specs = {
             k: v for k, v in specs.items()
-            if k not in ["ضمانت اصالت", "گارانتی", "گارانتی و مهلت تست", "مهلت تست و تعویض"]
+            if k not in NON_SPEC_KEYS and v
         }
         if len(actual_specs) >= 2:
             return True
@@ -185,11 +294,12 @@ def product_has_specs(product: dict) -> bool:
         product.get("cpu"), product.get("ram"), product.get("gpu"), product.get("power"),
         product.get("capacity"), product.get("blade")
     ]
-    if any(bool(str(f).strip()) for f in meaningful_fields if f is not None):
+    filled_meaningful = [f for f in meaningful_fields if f is not None and str(f).strip()]
+    if len(filled_meaningful) >= 2:
         return True
 
     more_details = str(product.get("more_details") or "").strip()
-    if len(more_details) > 12 and ("|" in more_details or ":" in more_details):
+    if len(more_details) > 30 and (more_details.count("|") >= 2 or more_details.count(":") >= 2):
         return True
 
     return False
@@ -290,110 +400,190 @@ def _parse_ai_json_response(raw_text: str) -> Optional[Dict[str, str]]:
 
 # ─── فراخوانی Gemini API ───
 
-def call_gemini_api(api_key: str, product: dict) -> Optional[Dict[str, str]]:
-    """فراخوانی جمینای با تنظیم دما روی 0.1 جهت بیشترین انطباق و کمترین خطا"""
+def call_gemini_api_with_error(api_key: str, product: dict) -> Tuple[Optional[Dict[str, str]], str]:
+    """فراخوانی جمینای با تنظیم دما روی 0.1 جهت بیشترین انطباق و کمترین خطا با گزارش ارور"""
     if not api_key:
-        return None
+        return None, "کلید GEMINI_API_KEY تنظیم نشده است."
 
     prompt = build_grounded_specs_prompt(product)
     pname = product.get("name", "")
+    last_error = "پاسخی از مدل دریافت نشد."
 
-    models_to_try = [DEFAULT_GEMINI_MODEL, FALLBACK_GEMINI_MODEL]
+    models_to_try = [DEFAULT_GEMINI_MODEL, FALLBACK_GEMINI_MODEL, EXTRA_GEMINI_MODEL]
 
     for model_name in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-        payload = {
-            "contents": [
-                {
-                    "parts": [{"text": prompt}]
+        payloads = [
+            {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 600,
+                    "responseMimeType": "application/json"
                 }
-            ],
-            "generationConfig": {
-                "temperature": 0.1,  # دمای پایین برای دقت علمی و عدم توهم
-                "maxOutputTokens": 600,
-                "responseMimeType": "application/json"
+            },
+            {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 600
+                }
             }
-        }
+        ]
 
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
+        for payload in payloads:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
 
-        try:
-            with urllib.request.urlopen(req, timeout=6.5) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                candidates = data.get("candidates", [])
-                if not candidates:
-                    continue
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if not parts:
-                    continue
-                raw_text = parts[0].get("text", "")
-                specs = _parse_ai_json_response(raw_text)
-                if specs:
-                    logger.info(f"✅ [GEMINI AI] مشخصات دقیق '{pname}' با موفقیت استخراج شد.")
-                    return specs
-        except urllib.error.HTTPError as he:
-            err_body = he.read().decode("utf-8", errors="ignore")
-            logger.warning(f"⚠️ [GEMINI HTTP {he.code}] Model {model_name}: {err_body[:180]}")
-            if he.code in [400, 403]:
-                break
-        except Exception as e:
-            logger.warning(f"⚠️ [GEMINI ERROR] Model {model_name} for '{pname}': {e}")
+            try:
+                with urllib.request.urlopen(req, timeout=7.5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    candidates = data.get("candidates", [])
+                    if not candidates:
+                        continue
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if not parts:
+                        continue
+                    raw_text = parts[0].get("text", "")
+                    specs = _parse_ai_json_response(raw_text)
+                    if specs:
+                        logger.info(f"✅ [GEMINI AI] مشخصات دقیق '{pname}' با موفقیت از مدل {model_name} استخراج شد.")
+                        return specs, ""
+            except urllib.error.HTTPError as he:
+                err_body = he.read().decode("utf-8", errors="ignore")
+                last_error = f"HTTP {he.code}: {err_body[:180]}"
+                logger.warning(f"⚠️ [GEMINI HTTP {he.code}] Model {model_name}: {err_body[:180]}")
+                if he.code in [400, 403] and ("API key not valid" in err_body or "API_KEY_INVALID" in err_body):
+                    return None, f"کلید API نامعتبر است (HTTP {he.code})"
+                if he.code == 429:
+                    return None, "سهمیه درخواست‌های هوش مصنوعی پر است (Rate Limit 429)."
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"⚠️ [GEMINI ERROR] Model {model_name} for '{pname}': {e}")
 
-    return None
+    return None, last_error
+
+def call_gemini_api(api_key: str, product: dict) -> Optional[Dict[str, str]]:
+    """فراخوانی جمینای جهت سازگاری کامل با توابع قبلی"""
+    specs, _ = call_gemini_api_with_error(api_key, product)
+    return specs
 
 # ─── فراخوانی DeepSeek API ───
 
-def call_deepseek_api(api_key: str, product: dict) -> Optional[Dict[str, str]]:
-    """فراخوانی دیپ‌سیک با پرامپت دقیق منطبق بر مدل"""
+def call_deepseek_api_with_error(api_key: str, product: dict) -> Tuple[Optional[Dict[str, str]], str]:
+    """فراخوانی دیپ‌سیک با پرامپت دقیق منطبق بر مدل با گزارش ارور"""
     if not api_key:
-        return None
+        return None, "کلید DEEPSEEK_API_KEY تنظیم نشده است."
 
     prompt = build_grounded_specs_prompt(product)
     pname = product.get("name", "")
 
     endpoint = f"{DEFAULT_DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions"
-    payload = {
-        "model": DEFAULT_DEEPSEEK_MODEL,
-        "messages": [
-            {"role": "system", "content": "تو متخصص فنی کاتالوگ لوازم خانگی هستی. خروجی فقط یک شیء JSON با مشخصات فنی واقعی کارخانه است."},
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 600,
-        "temperature": 0.1,
-        "stream": False
+    models_to_try = [DEFAULT_DEEPSEEK_MODEL, FALLBACK_DEEPSEEK_MODEL]
+    last_error = "پاسخی از مدل دریافت نشد."
+
+    for model_name in models_to_try:
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": "تو متخصص فنی کاتالوگ لوازم خانگی هستی. خروجی فقط یک شیء JSON با مشخصات فنی واقعی کارخانه است."},
+                {"role": "user", "content": prompt}
+            ],
+            "max_tokens": 600,
+            "temperature": 0.1,
+            "stream": False
+        }
+
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}"
+            },
+            method="POST"
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=9.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                choice = data.get("choices", [{}])[0]
+                content = (choice.get("message", {}).get("content") or "").strip()
+                reasoning = (choice.get("message", {}).get("reasoning_content") or "").strip()
+                if not content and reasoning:
+                    content = reasoning
+                specs = _parse_ai_json_response(content)
+                if specs:
+                    logger.info(f"✅ [DEEPSEEK AI] مشخصات دقیق '{pname}' با موفقیت از مدل {model_name} استخراج شد.")
+                    return specs, ""
+        except urllib.error.HTTPError as he:
+            err_body = he.read().decode("utf-8", errors="ignore")
+            last_error = f"HTTP {he.code}: {err_body[:180]}"
+            logger.warning(f"⚠️ [DEEPSEEK HTTP {he.code}] Model {model_name}: {err_body[:180]}")
+            if he.code in [401, 403]:
+                return None, f"کلید DeepSeek نامعتبر است (HTTP {he.code})"
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(f"⚠️ [DEEPSEEK ERROR] for '{pname}': {e}")
+
+    return None, last_error
+
+def call_deepseek_api(api_key: str, product: dict) -> Optional[Dict[str, str]]:
+    """فراخوانی دیپ‌سیک جهت سازگاری با توابع قبلی"""
+    specs, _ = call_deepseek_api_with_error(api_key, product)
+    return specs
+
+# ─── تست زنده اتصال هوش مصنوعی ───
+
+def test_ai_connection(provider: Optional[str] = None) -> Tuple[bool, str, float]:
+    """تست زنده اتصال به هوش مصنوعی (Google Gemini یا DeepSeek)"""
+    import time
+    start_t = time.time()
+
+    settings = get_ai_settings()
+    active_p = (provider or settings.get("provider", "gemini")).lower().strip()
+
+    if active_p in ["off", "disabled"]:
+        return False, "موتور هوش مصنوعی در پنل خاموش است.", 0.0
+
+    test_product = {
+        "name": "تلویزیون 55 اینچ ال جی مدل C3",
+        "brand": "ال جی",
+        "model_number": "OLED55C3",
+        "category_name": "تلویزیون"
     }
 
-    req = urllib.request.Request(
-        endpoint,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
-        },
-        method="POST"
-    )
+    if active_p == "gemini":
+        key = get_gemini_api_key()
+        if not key:
+            return False, "کلید GEMINI_API_KEY تنظیم نشده است یا نامعتبر است. لطفاً از دکمه «🔑 ثبت / ویرایش کلید Gemini» کلید معتبر را وارد فرمایید.", 0.0
 
-    try:
-        with urllib.request.urlopen(req, timeout=8.0) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            choice = data.get("choices", [{}])[0]
-            content = (choice.get("message", {}).get("content") or "").strip()
-            reasoning = (choice.get("message", {}).get("reasoning_content") or "").strip()
-            if not content and reasoning:
-                content = reasoning
-            specs = _parse_ai_json_response(content)
-            if specs:
-                logger.info(f"✅ [DEEPSEEK AI] مشخصات دقیق '{pname}' با موفقیت استخراج شد.")
-                return specs
-    except Exception as e:
-        logger.warning(f"⚠️ [DEEPSEEK ERROR] for '{pname}': {e}")
+        specs, err = call_gemini_api_with_error(key, test_product)
+        elapsed = round(time.time() - start_t, 2)
+        if specs:
+            sample_specs = " | ".join([f"{k}: {v}" for k, v in list(specs.items())[:3]])
+            return True, f"اتصال به Google Gemini کاملاً برقرار است! (زمان پاسخ: {elapsed} ثانیه)\nنمونه مشخصات استخراج شده:\n{sample_specs}", elapsed
+        else:
+            return False, f"خطا در ارتباط با Gemini: {err}", elapsed
 
-    return None
+    elif active_p == "deepseek":
+        key = get_deepseek_api_key()
+        if not key:
+            return False, "کلید DEEPSEEK_API_KEY تنظیم نشده است. لطفاً از دکمه «🔑 ثبت / ویرایش کلید DeepSeek» کلید وارد فرمایید.", 0.0
+
+        specs, err = call_deepseek_api_with_error(key, test_product)
+        elapsed = round(time.time() - start_t, 2)
+        if specs:
+            sample_specs = " | ".join([f"{k}: {v}" for k, v in list(specs.items())[:3]])
+            return True, f"اتصال به DeepSeek کاملاً برقرار است! (زمان پاسخ: {elapsed} ثانیه)\nنمونه مشخصات استخراج شده:\n{sample_specs}", elapsed
+        else:
+            return False, f"خطا در ارتباط با DeepSeek: {err}", elapsed
+
+    return False, f"ارائه‌دهنده نامشخص: {active_p}", 0.0
 
 # ─── ذخیره‌سازی دائمی یکبار برای همیشه ───
 
@@ -457,16 +647,20 @@ def sync_save_ai_specs(pid: str, specs: dict):
 
 # ─── روال اصلی On-Demand با مدیریت ارائه‌دهنده فعال ───
 
-async def async_enrich_product_with_gemini_on_demand(product: dict) -> bool:
+async def async_enrich_product_with_gemini_on_demand(
+    product: dict,
+    force: bool = False,
+    return_error: bool = False
+) -> Any:
     """
     روال آن‌دیمند یکپارچه:
     ۱. بررسی وضعیت هوش مصنوعی (خاموش/روشن، جمینای یا دیپ‌سیک)
-    ۲. بررسی اینکه آیا کالا از قبل مشخصات دارد؟ (در صورت داشتن مشخصات ۰ معطلی)
+    ۲. بررسی اینکه آیا کالا از قبل مشخصات دارد؟ (در صورت داشتن مشخصات ۰ معطلی، مگر اینکه force=True باشد)
     ۳. استخراج منحصراً مشخصات واقعی کارخانه‌ای مدل
     ۴. ذخیره‌سازی دائمی یکبار برای همیشه
     """
     if not product or not isinstance(product, dict):
-        return False
+        return (False, "اطلاعات کالا معتبر نیست") if return_error else False
 
     # بررسی تنظیمات فعال ادمین
     ai_settings = get_ai_settings()
@@ -474,47 +668,50 @@ async def async_enrich_product_with_gemini_on_demand(product: dict) -> bool:
 
     if provider in ["off", "disabled"]:
         logger.debug("AI specs enrichment is currently disabled by admin.")
-        return False
+        return (False, "هوش مصنوعی در تنظیمات پنل ادمین خاموش است.") if return_error else False
 
-    # بررسی اولیه مشخصات کالا
-    if product_has_specs(product):
-        return False
+    # بررسی اولیه مشخصات کالا (در صورت force بودن بازنویسی می‌شود)
+    if not force and product_has_specs(product):
+        return (False, "کالا از قبل دارای مشخصات فنی کامل است.") if return_error else False
 
     pname = product.get("name", "")
     if not pname:
-        return False
+        return (False, "نام کالا خالی است.") if return_error else False
 
     specs = None
+    err_detail = ""
 
     if provider == "gemini":
         api_key = get_gemini_api_key()
         if not api_key:
-            logger.debug("GEMINI_API_KEY is not set or empty.")
-            return False
+            err_msg = "کلید GEMINI_API_KEY تنظیم نشده یا نامعتبر است."
+            logger.debug(err_msg)
+            return (False, err_msg) if return_error else False
         logger.info(f"🤖 [GEMINI LAZY] استعلام مشخصات موثق برای: '{pname}'...")
         try:
-            specs = await asyncio.wait_for(
-                asyncio.to_thread(call_gemini_api, api_key, product),
-                timeout=7.0
+            specs, err_detail = await asyncio.wait_for(
+                asyncio.to_thread(call_gemini_api_with_error, api_key, product),
+                timeout=8.5
             )
         except Exception as e:
             logger.warning(f"Gemini on-demand note for '{pname}': {e}")
-            return False
+            return (False, f"تایم‌اوت یا خطای شبکه: {e}") if return_error else False
 
     elif provider == "deepseek":
         api_key = get_deepseek_api_key()
         if not api_key:
-            logger.debug("DEEPSEEK_API_KEY is not set or empty.")
-            return False
+            err_msg = "کلید DEEPSEEK_API_KEY تنظیم نشده است."
+            logger.debug(err_msg)
+            return (False, err_msg) if return_error else False
         logger.info(f"🤖 [DEEPSEEK LAZY] استعلام مشخصات موثق برای: '{pname}'...")
         try:
-            specs = await asyncio.wait_for(
-                asyncio.to_thread(call_deepseek_api, api_key, product),
-                timeout=8.5
+            specs, err_detail = await asyncio.wait_for(
+                asyncio.to_thread(call_deepseek_api_with_error, api_key, product),
+                timeout=10.0
             )
         except Exception as e:
             logger.warning(f"DeepSeek on-demand note for '{pname}': {e}")
-            return False
+            return (False, f"تایم‌اوت یا خطای شبکه: {e}") if return_error else False
 
     if specs and isinstance(specs, dict):
         product["ai_specs"] = specs
@@ -546,6 +743,6 @@ async def async_enrich_product_with_gemini_on_demand(product: dict) -> bool:
             asyncio.create_task(asyncio.to_thread(sync_save_ai_specs, pid, specs))
 
         logger.info(f"🎉 [AI APPLIED] مشخصات کالا '{pname}' با موفقیت روی کارت اعمال و ذخیره شد.")
-        return True
+        return (True, "") if return_error else True
 
-    return False
+    return (False, err_detail or "مدل هوش مصنوعی مشخصاتی برای این مدل استخراج نکرد.") if return_error else False
