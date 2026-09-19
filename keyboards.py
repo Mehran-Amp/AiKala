@@ -342,7 +342,11 @@ def product_inline_keyboard(
         [
             InlineKeyboardButton("💰 استعلام قیمت تمام‌شده و کرایه", callback_data=make_safe_cb("inq", pid_str))
         ],
-        action_row
+        action_row,
+        [
+            InlineKeyboardButton("📂 دسته‌بندی‌ها", callback_data="cat_back"),
+            InlineKeyboardButton("🏠 منوی اصلی", callback_data="back_to_main")
+        ]
     ]
 
     # دکمه بازگشت به پنل مدیریت در صورت تست حالت مشتری توسط ادمین
@@ -362,7 +366,8 @@ def inquiry_quote_keyboard(pid: str, req_id: Any = None) -> InlineKeyboardMarkup
             InlineKeyboardButton("🛒 ثبت سفارش و صدور پیش‌فاکتور رسمی", callback_data=make_safe_cb("buy", payload))
         ],
         [
-            InlineKeyboardButton("📞 پشتیبانی و مشاوره", callback_data="show_support")
+            InlineKeyboardButton("📞 پشتیبانی و مشاوره", callback_data="show_support"),
+            InlineKeyboardButton("🏠 منوی اصلی", callback_data="back_to_main")
         ]
     ]
     return InlineKeyboardMarkup(buttons)
@@ -392,6 +397,11 @@ async def show_search_page(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         nav.append(InlineKeyboardButton("بعدی ➡️", callback_data=f"spage|{page+1}"))
     if nav:
         buttons.append(nav)
+
+    buttons.append([
+        InlineKeyboardButton("📂 دسته‌بندی‌ها", callback_data="cat_back"),
+        InlineKeyboardButton("🏠 منوی اصلی", callback_data="back_to_main")
+    ])
 
     kb = InlineKeyboardMarkup(buttons)
     text = f"🔍 <b>تعداد {total} محصول منطبق یافت شد:</b> (صفحه {page+1} از {((total-1)//page_size)+1})"

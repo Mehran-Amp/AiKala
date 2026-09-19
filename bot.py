@@ -177,7 +177,34 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔹 پیش‌فاکتور دیجیتال رسمی با بیعانه امن و تسویه درب منزل\n\n"
         f"👇 لطفاً نام کالا یا مدل مورد نظرتان را تایپ کنید (مثلاً: <code>V9</code> یا <code>الجی</code>) یا از منوی زیر استفاده فرمایید:"
     )
+    try:
+        from telegram import MenuButtonCommands
+        await context.bot.set_chat_menu_button(chat_id=user.id, menu_button=MenuButtonCommands())
+    except Exception:
+        pass
     await update.message.reply_text(welcome_text, reply_markup=main_menu_keyboard(adm), parse_mode="HTML")
+
+async def categories_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش مستقیم فهرست دسته‌بندی‌های محصولات"""
+    kb = get_main_categories_markup()
+    user_id = update.effective_user.id if update.effective_user else 0
+    adm = is_admin(user_id)
+    await update.message.reply_text(
+        "📂 <b>دسته‌بندی‌های جامع فروشگاه هوشمند کالا:</b>\n"
+        "لطفاً دسته کالای مورد نظر خود را جهت مشاهده مشخصات و کاتالوگ انتخاب فرمایید:",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """راهنمای سریع جستجوی کالا و نمایش منوی اصلی"""
+    user_id = update.effective_user.id if update.effective_user else 0
+    adm = is_admin(user_id)
+    await update.message.reply_text(
+        "💡 لطفاً نام مدل، برند یا دسته‌بندی کالا را تایپ فرمایید (مثال: <code>V9</code> یا <code>الجی</code>):",
+        reply_markup=main_menu_keyboard(adm),
+        parse_mode="HTML"
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_guide_command(update, context)
@@ -776,17 +803,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         # تاییدیه آنی به خریدار (بدون معطلی)
-        await update.message.reply_text(
+        escaped_pname = html.escape(str(pname))
+        escaped_city = html.escape(str(city))
+        confirm_text = (
             f"✅ <b>درخواست استعلام شما با موفقیت ثبت شد!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📦 <b>کالا:</b> {pname}\n"
-            f"📍 <b>مقصد تحویل:</b> {city}\n"
+            f"📦 <b>کالا:</b> {escaped_pname}\n"
+            f"📍 <b>مقصد تحویل:</b> {escaped_city}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⏳ مشخصات به واحد فروش ارسال گردید.\n"
             f"قیمت قطعی روز و شرایط دقیق ارسال تا دقایقی دیگر به همراه دکمه پیش‌فاکتور در همین صفحه برای شما ارسال می‌شود.\n\n"
-            f"ℹ️ <i>یادآوری: لوازم خانگی درشت با باربری (بیعانه + تسویه در محل) و برخی محصولات ریز با پست پیشتاز (تسویه کامل قبل از ارسال) ارسال می‌گردند.</i>",
-            parse_mode="HTML"
+            f"ℹ️ <i>یادآوری: لوازم خانگی درشت با باربری (بیعانه + تسویه در محل) و برخی محصولات ریز با پست پیشتاز (تسویه کامل قبل از ارسال) ارسال می‌گردند.</i>"
         )
+        inquiry_done_kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📂 دسته‌بندی محصولات", callback_data="cat_back"),
+                InlineKeyboardButton("🏠 منوی اصلی", callback_data="back_to_main")
+            ]
+        ])
+        try:
+            await update.message.reply_text(confirm_text, reply_markup=inquiry_done_kb, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Error replying to user text inquiry: {e}")
+            await context.bot.send_message(chat_id=user.id, text=confirm_text, reply_markup=inquiry_done_kb, parse_mode="HTML")
 
         # ارسال اعلان غیرمسدودکننده به ادمین‌ها در پس‌زمینه (Zero Latency برای مشتری)
         admin_kb = InlineKeyboardMarkup([
@@ -803,10 +842,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         admin_text = (
             f"🔔 <b>درخواست جدید استعلام قیمت تمام‌شده و کرایه!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📦 <b>کالا:</b> {pname} (کد: <code>{pid}</code>)\n"
-            f"🏷 <b>قیمت اولیه در کاتالوگ/کانال:</b> <b>{catalog_price}</b>\n"
-            f"📍 <b>مقصد تحویل خریدار:</b> <b>{city}</b>\n"
-            f"👤 <b>مشتری:</b> {user.full_name} ({user_info} | شناسه: <code>{user.id}</code>)\n"
+            f"📦 <b>کالا:</b> {escaped_pname} (کد: <code>{html.escape(str(pid))}</code>)\n"
+            f"🏷 <b>قیمت اولیه در کاتالوگ/کانال:</b> <b>{html.escape(str(catalog_price))}</b>\n"
+            f"📍 <b>مقصد تحویل خریدار:</b> <b>{escaped_city}</b>\n"
+            f"👤 <b>مشتری:</b> {html.escape(user.full_name or '')} ({html.escape(user_info)} | شناسه: <code>{user.id}</code>)\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"👇 <i>جهت ارسال قیمت نهایی و شرایط ارسال برای این مشتری روی دکمه زیر کلیک نمایید:</i>"
         )
@@ -827,8 +866,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(_notify_admins_async())
         return
 
+    clean_lower_text = text.strip().lower()
+    if clean_lower_text in ["منو", "منوی اصلی", "منو اصلی", "بازگشت به منو", "منوی فروشگاه", "خانه", "menu", "/menu"]:
+        welcome_text = (
+            f"🏠 <b>منوی اصلی بازرگانی و فروشگاه اینترنتی AiKala</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"سلام <b>{user.first_name}</b> گرامی! 🌹\n\n"
+            f"✨ <b>دسترسی سریع به امکانات فروشگاه:</b>\n"
+            f"🔹 جهت جستجوی کالا، نام یا مدل محصول را تایپ و ارسال فرمایید.\n"
+            f"🔹 برای مشاهده دسته‌بندی‌ها یا رهگیری سفارشات، از گزینه‌های زیر استفاده نمایید:"
+        )
+        await update.message.reply_text(welcome_text, reply_markup=main_menu_keyboard(adm), parse_mode="HTML")
+        return
+
     if text == "🔍 جستجوی کالا":
-        await update.message.reply_text("💡 لطفاً نام مدل، برند یا دسته‌بندی کالا را تایپ کنید (مثال: <code>V9</code> یا <code>الجی</code>):", parse_mode="HTML")
+        await update.message.reply_text(
+            "💡 لطفاً نام مدل، برند یا دسته‌بندی کالا را تایپ کنید (مثال: <code>V9</code> یا <code>الجی</code>):",
+            reply_markup=main_menu_keyboard(adm),
+            parse_mode="HTML"
+        )
         return
     elif text == "📂 دسته‌بندی‌ها":
         kb = get_main_categories_markup()
@@ -1041,17 +1097,17 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["awaiting_inquiry_pid"] = pid
         context.user_data["awaiting_inquiry_prod"] = prod
 
-        # ساخت دکمه‌های سریع برای انتخاب شهرهای پرتقاضا + دکمه لغو
+        # ساخت دکمه‌های سریع برای انتخاب شهرهای پرتقاضا + دکمه لغو با callback_data ایمن
         city_kb = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("تهران", callback_data=f"inq_city|{pid}|تهران"),
-                InlineKeyboardButton("اصفهان", callback_data=f"inq_city|{pid}|اصفهان"),
-                InlineKeyboardButton("مشهد", callback_data=f"inq_city|{pid}|مشهد"),
+                InlineKeyboardButton("تهران", callback_data=make_safe_cb("inq_city", f"{pid}|تهران")),
+                InlineKeyboardButton("اصفهان", callback_data=make_safe_cb("inq_city", f"{pid}|اصفهان")),
+                InlineKeyboardButton("مشهد", callback_data=make_safe_cb("inq_city", f"{pid}|مشهد")),
             ],
             [
-                InlineKeyboardButton("شیراز", callback_data=f"inq_city|{pid}|شیراز"),
-                InlineKeyboardButton("تبریز", callback_data=f"inq_city|{pid}|تبریز"),
-                InlineKeyboardButton("کرج", callback_data=f"inq_city|{pid}|کرج"),
+                InlineKeyboardButton("شیراز", callback_data=make_safe_cb("inq_city", f"{pid}|شیراز")),
+                InlineKeyboardButton("تبریز", callback_data=make_safe_cb("inq_city", f"{pid}|تبریز")),
+                InlineKeyboardButton("کرج", callback_data=make_safe_cb("inq_city", f"{pid}|کرج")),
             ],
             [
                 InlineKeyboardButton("❌ انصراف از استعلام", callback_data="cancel_inq")
@@ -1060,91 +1116,117 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         msg_prompt = (
             f"💰 <b>استعلام قیمت تمام‌شده و کرایه کالا:</b>\n"
-            f"📦 <b>{pname}</b>\n\n"
+            f"📦 <b>{html.escape(str(pname))}</b>\n\n"
             f"🏙 لطفاً <b>شهر مقصد تحویل</b> را از گزینه‌های زیر لمس فرمایید، یا نام شهر خود را به صورت متنی تایپ و ارسال نمایید:\n"
             f"<i>(مثال: قم، اهواز، کرمان یا تهران - تهران)</i>\n\n"
             f"💡 <i>نکته ارسال: لوازم خانگی درشت با باربری (بیعانه + تسویه در محل) و برخی محصولات ریز با پست پیشتاز (تسویه کامل قبل از ارسال) ارسال می‌گردند.</i>"
         )
         # اجرای موازی answer و reply_text جهت دریافت بازخورد آنی کاربر بدون معطلی شبکه
-        await asyncio.gather(
-            query.answer("⏳ لطفاً شهر مقصد را انتخاب یا تایپ فرمایید...", show_alert=False),
-            query.message.reply_text(msg_prompt, reply_markup=city_kb, parse_mode="HTML")
-        )
+        await query.answer("⏳ لطفاً شهر مقصد را انتخاب یا تایپ فرمایید...", show_alert=False)
+        try:
+            if query.message:
+                await query.message.reply_text(msg_prompt, reply_markup=city_kb, parse_mode="HTML")
+            else:
+                await context.bot.send_message(chat_id=query.from_user.id, text=msg_prompt, reply_markup=city_kb, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Error sending city inquiry prompt: {e}")
+            await context.bot.send_message(chat_id=query.from_user.id, text=msg_prompt, reply_markup=city_kb, parse_mode="HTML")
 
     elif data.startswith("inq_city|"):
-        parts = data.split("|", 2)
-        if len(parts) >= 3:
-            pid = parts[1]
-            city = parts[2]
-            prod = next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
-            if not prod:
-                prod = await db.get_product_by_id(pid)
-            pname = prod.get("name", "کالای انتخابی") if prod else "کالای انتخابی"
-            user = query.from_user
+        payload = resolve_safe_cb(data)
+        pid = ""
+        city = ""
+        if "|" in payload:
+            pid, city = payload.rsplit("|", 1)
+        else:
+            city = payload
 
-            context.user_data.pop("awaiting_inquiry_pid", None)
-            context.user_data.pop("awaiting_inquiry_prod", None)
+        if not pid:
+            pid = context.user_data.get("awaiting_inquiry_pid", "")
 
-            # ثبت سریع در دیتابیس
-            req_id = await db.create_price_inquiry(
-                user_id=user.id,
-                username=f"@{user.username}" if user.username else user.first_name,
-                product_id=str(pid),
-                product_name=pname,
-                city=city
-            )
+        prod = next((p for p in JSON_PRODUCTS if str(p.get("product_id")) == str(pid)), None)
+        if not prod:
+            prod = await db.get_product_by_id(pid)
+        pname = prod.get("name", "کالای انتخابی") if prod else "کالای انتخابی"
+        user = query.from_user
 
-            await asyncio.gather(
-                query.answer("✅ استعلام شما با موفقیت ثبت شد."),
-                query.message.reply_text(
-                    f"✅ <b>درخواست استعلام شما با موفقیت ثبت شد!</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📦 <b>کالا:</b> {pname}\n"
-                    f"📍 <b>مقصد تحویل:</b> {city}\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"⏳ مشخصات به واحد فروش ارسال گردید.\n"
-                    f"قیمت قطعی روز و شرایط دقیق ارسال تا دقایقی دیگر به همراه دکمه پیش‌فاکتور در همین صفحه برای شما ارسال می‌شود.\n\n"
-                    f"ℹ️ <i>یادآوری: لوازم خانگی درشت با باربری (بیعانه + تسویه در محل) و برخی محصولات ریز با پست پیشتاز (تسویه کامل قبل از ارسال) ارسال می‌گردند.</i>",
-                    parse_mode="HTML"
-                )
-            )
+        context.user_data.pop("awaiting_inquiry_pid", None)
+        context.user_data.pop("awaiting_inquiry_prod", None)
 
-            admin_kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("🚚 پاسخ با باربری (بیعانه)", callback_data=f"set_ship|freight|{req_id}"),
-                    InlineKeyboardButton("📮 پاسخ با پست (تسویه کامل)", callback_data=f"set_ship|post|{req_id}")
-                ],
-                [
-                    InlineKeyboardButton("❌ اتمام موجودی", callback_data=f"out_of_stock|{req_id}")
-                ]
-            ])
-            user_info = f"@{user.username}" if user.username else user.first_name
-            catalog_price = prod.get("price", "درج نشده") if prod else "درج نشده"
-            admin_text = (
-                f"🔔 <b>درخواست جدید استعلام قیمت تمام‌شده و کرایه!</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"📦 <b>کالا:</b> {pname} (کد: <code>{pid}</code>)\n"
-                f"🏷 <b>قیمت اولیه در کاتالوگ/کانال:</b> <b>{catalog_price}</b>\n"
-                f"📍 <b>مقصد تحویل خریدار:</b> <b>{city}</b>\n"
-                f"👤 <b>مشتری:</b> {user.full_name} ({user_info} | شناسه: <code>{user.id}</code>)\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"👇 <i>جهت ارسال قیمت نهایی و شرایط ارسال برای این مشتری روی دکمه زیر کلیک نمایید:</i>"
-            )
+        # ثبت سریع در دیتابیس
+        req_id = await db.create_price_inquiry(
+            user_id=user.id,
+            username=f"@{user.username}" if user.username else user.first_name,
+            product_id=str(pid),
+            product_name=pname,
+            city=city
+        )
 
-            async def _notify_admins_async():
-                target_admins = get_all_admin_ids()
-                for admin_id in target_admins:
-                    try:
-                        await context.bot.send_message(
-                            chat_id=admin_id,
-                            text=admin_text,
-                            reply_markup=admin_kb,
-                            parse_mode="HTML"
-                        )
-                    except Exception as e:
-                        logger.debug(f"Notification to admin {admin_id} skipped: {e}")
+        escaped_pname = html.escape(str(pname))
+        escaped_city = html.escape(str(city))
+        confirm_text = (
+            f"✅ <b>درخواست استعلام شما با موفقیت ثبت شد!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 <b>کالا:</b> {escaped_pname}\n"
+            f"📍 <b>مقصد تحویل:</b> {escaped_city}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⏳ مشخصات به واحد فروش ارسال گردید.\n"
+            f"قیمت قطعی روز و شرایط دقیق ارسال تا دقایقی دیگر به همراه دکمه پیش‌فاکتور در همین صفحه برای شما ارسال می‌شود.\n\n"
+            f"ℹ️ <i>یادآوری: لوازم خانگی درشت با باربری (بیعانه + تسویه در محل) و برخی محصولات ریز با پست پیشتاز (تسویه کامل قبل از ارسال) ارسال می‌گردند.</i>"
+        )
 
-            asyncio.create_task(_notify_admins_async())
+        await query.answer("✅ استعلام شما با موفقیت ثبت شد.")
+        inquiry_done_kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📂 دسته‌بندی محصولات", callback_data="cat_back"),
+                InlineKeyboardButton("🏠 منوی اصلی", callback_data="back_to_main")
+            ]
+        ])
+        try:
+            if query.message:
+                await query.message.reply_text(confirm_text, reply_markup=inquiry_done_kb, parse_mode="HTML")
+            else:
+                await context.bot.send_message(chat_id=user.id, text=confirm_text, reply_markup=inquiry_done_kb, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Error sending inquiry confirmation: {e}")
+            await context.bot.send_message(chat_id=user.id, text=confirm_text, reply_markup=inquiry_done_kb, parse_mode="HTML")
+
+        admin_kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🚚 پاسخ با باربری (بیعانه)", callback_data=f"set_ship|freight|{req_id}"),
+                InlineKeyboardButton("📮 پاسخ با پست (تسویه کامل)", callback_data=f"set_ship|post|{req_id}")
+            ],
+            [
+                InlineKeyboardButton("❌ اتمام موجودی", callback_data=f"out_of_stock|{req_id}")
+            ]
+        ])
+        user_info = f"@{user.username}" if user.username else user.first_name
+        catalog_price = prod.get("price", "درج نشده") if prod else "درج نشده"
+        admin_text = (
+            f"🔔 <b>درخواست جدید استعلام قیمت تمام‌شده و کرایه!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 <b>کالا:</b> {escaped_pname} (کد: <code>{html.escape(str(pid))}</code>)\n"
+            f"🏷 <b>قیمت اولیه در کاتالوگ/کانال:</b> <b>{html.escape(str(catalog_price))}</b>\n"
+            f"📍 <b>مقصد تحویل خریدار:</b> <b>{escaped_city}</b>\n"
+            f"👤 <b>مشتری:</b> {html.escape(user.full_name or '')} ({html.escape(user_info)} | شناسه: <code>{user.id}</code>)\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👇 <i>جهت ارسال قیمت نهایی و شرایط ارسال برای این مشتری روی دکمه زیر کلیک نمایید:</i>"
+        )
+
+        async def _notify_admins_async():
+            target_admins = get_all_admin_ids()
+            for admin_id in target_admins:
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=admin_text,
+                        reply_markup=admin_kb,
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.debug(f"Notification to admin {admin_id} skipped: {e}")
+
+        asyncio.create_task(_notify_admins_async())
         return
 
     elif data == "cancel_inq":
@@ -1649,23 +1731,52 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "back_to_main":
         await query.answer()
         user = update.effective_user
+        adm = is_admin(user.id if user else 0)
         welcome_text = (
-            f"🏠 <b>منوی اصلی بازرگانی هوشمند کالا</b>\n"
+            f"🏠 <b>منوی اصلی بازرگانی و فروشگاه هوشمند کالا</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"سلام <b>{user.first_name}</b> گرامی! 🌹\n\n"
-            f"✨ <b>دسترسی سریع به امکانات ربات:</b>\n"
+            f"✨ <b>دسترسی سریع به امکانات فروشگاه:</b>\n"
             f"🔹 جهت جستجوی کالا، نام یا مدل محصول را تایپ و ارسال فرمایید.\n"
-            f"🔹 برای رهگیری سفارشات یا راهنمایی، از گزینه‌های زیر استفاده فرمایید:"
+            f"🔹 برای مشاهده دسته‌بندی‌ها یا رهگیری سفارشات، از گزینه‌های زیر استفاده نمایید:"
         )
         main_inline_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📦 پیگیری سفارشات", callback_data="track_order_list")],
-            [InlineKeyboardButton("ℹ️ راهنمای جامع خرید و ضمانت", callback_data="guide_main")],
-            [InlineKeyboardButton("📞 پشتیبانی و مشاوره", callback_data="show_support")]
+            [
+                InlineKeyboardButton("📂 دسته‌بندی محصولات", callback_data="cat_back"),
+                InlineKeyboardButton("🔍 جستجوی کالا", callback_data="btn_search_prompt")
+            ],
+            [
+                InlineKeyboardButton("📦 پیگیری سفارشات", callback_data="track_order_list"),
+                InlineKeyboardButton("ℹ️ راهنمای خرید و ضمانت", callback_data="guide_main")
+            ],
+            [
+                InlineKeyboardButton("📞 پشتیبانی و مشاوره", callback_data="show_support")
+            ]
         ])
         try:
             await query.edit_message_text(welcome_text, reply_markup=main_inline_kb, parse_mode="HTML")
         except Exception:
             await query.message.reply_text(welcome_text, reply_markup=main_inline_kb, parse_mode="HTML")
+
+        # بازگرداندن و تثبیت کیبورد دکمه‌های منو در پایین صفحه
+        try:
+            await query.message.reply_text(
+                "📋 <i>دکمه‌های منوی اصلی در پایین صفحه در دسترس شماست:</i>",
+                reply_markup=main_menu_keyboard(adm),
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+    elif data == "btn_search_prompt":
+        await query.answer()
+        user = update.effective_user
+        adm = is_admin(user.id if user else 0)
+        await query.message.reply_text(
+            "💡 لطفاً نام مدل، برند یا دسته‌بندی کالا را تایپ کنید (مثال: <code>V9</code> یا <code>الجی</code>):",
+            reply_markup=main_menu_keyboard(adm),
+            parse_mode="HTML"
+        )
 
     elif data == "close_window":
         try:
@@ -2322,6 +2433,10 @@ def main():
 
     # دستورات پایه و مدیریتی
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("menu", start_command))
+    app.add_handler(CommandHandler("categories", categories_command))
+    app.add_handler(CommandHandler("search", search_command))
+    app.add_handler(CommandHandler("guide", help_command))
     app.add_handler(CommandHandler("support", support_command))
     app.add_handler(CommandHandler("track", track_order_command))
     app.add_handler(CommandHandler("sync_photos", sync_photos_command))
@@ -2356,6 +2471,24 @@ def main():
             logger.info(f"📸 Image Channel: {chat.title} ({PHOTOS_CHANNEL}) connected.")
         except Exception as e:
             logger.warning(f"⚠️ Image Channel ({PHOTOS_CHANNEL}): {e}")
+
+        # ثبت دائمی دکمه Menu Button و دستورات رسمی ربات در تلگرام
+        try:
+            from telegram import BotCommand, MenuButtonCommands
+            commands = [
+                BotCommand("menu", "🏠 منوی اصلی فروشگاه"),
+                BotCommand("categories", "📂 دسته‌بندی محصولات"),
+                BotCommand("search", "🔍 جستجوی کالا"),
+                BotCommand("track", "📦 پیگیری سفارشات"),
+                BotCommand("support", "📞 پشتیبانی و مشاوره"),
+                BotCommand("guide", "ℹ️ راهنمای خرید و ضمانت"),
+                BotCommand("start", "🔄 شروع مجدد ربات"),
+            ]
+            await application.bot.set_my_commands(commands)
+            await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+            logger.info("✅ Persistent Chat Menu Button and official BotCommands registered.")
+        except Exception as e_cmd:
+            logger.warning(f"Could not register BotCommands / MenuButton: {e_cmd}")
 
         # راه‌اندازی تسک پس‌زمینه پشتیبان‌گیری خودکار ۲۴ ساعته (پیش‌فرض غیرفعال)
         try:

@@ -19,8 +19,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
-    ReplyKeyboardMarkup,
-    ReplyKeyboardRemove
+    ReplyKeyboardMarkup
 )
 from telegram.ext import (
     ConversationHandler,
@@ -228,7 +227,7 @@ async def order_name_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     contact_kb = ReplyKeyboardMarkup([
         [KeyboardButton("📱 ارسال خودکار شماره موبایل من", request_contact=True)],
         [KeyboardButton("❌ انصراف از خرید")]
-    ], resize_keyboard=True, one_time_keyboard=True)
+    ], resize_keyboard=True)
 
     await update.message.reply_text(
         "📱 <b>مرحله ۲ از ۵:</b>\n"
@@ -254,7 +253,7 @@ async def order_phone1_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         contact_retry_kb = ReplyKeyboardMarkup([
             [KeyboardButton("📱 ارسال خودکار شماره موبایل من", request_contact=True)],
             [KeyboardButton("❌ انصراف از خرید")]
-        ], resize_keyboard=True, one_time_keyboard=True)
+        ], resize_keyboard=True)
         await update.message.reply_text(
             "❌ لطفاً یک شماره موبایل معتبر ۱۱ رقمی (مثال: 09123456789) وارد فرمایید یا دکمه <b>«📱 ارسال خودکار شماره موبایل من»</b> را لمس کنید:",
             reply_markup=contact_retry_kb,
@@ -267,7 +266,7 @@ async def order_phone1_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone2_kb = ReplyKeyboardMarkup([
         [KeyboardButton("ندارم")],
         [KeyboardButton("❌ انصراف از خرید")]
-    ], resize_keyboard=True, one_time_keyboard=True)
+    ], resize_keyboard=True)
 
     await update.message.reply_text(
         "📞 <b>مرحله ۳ از ۵:</b>\n"
@@ -288,7 +287,7 @@ async def order_phone2_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loc_city_kb = ReplyKeyboardMarkup([
         [KeyboardButton("📍 ارسال لوکیشن (تعیین خودکار استان و شهر)", request_location=True)],
         [KeyboardButton("❌ انصراف از خرید")]
-    ], resize_keyboard=True, one_time_keyboard=True)
+    ], resize_keyboard=True)
 
     await update.message.reply_text(
         "📍 <b>مرحله ۴ از ۵:</b>\n"
@@ -330,7 +329,7 @@ async def order_city_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [KeyboardButton("تایید همین آدرس لوکیشن")],
             [KeyboardButton("📍 ارسال مجدد لوکیشن", request_location=True)],
             [KeyboardButton("❌ انصراف از خرید")]
-        ], resize_keyboard=True, one_time_keyboard=True)
+        ], resize_keyboard=True)
 
         await update.message.reply_text(
             f"✅ <b>موقعیت مکانی شما با موفقیت شناسایی شد:</b>\n"
@@ -351,7 +350,7 @@ async def order_city_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     addr_kb = ReplyKeyboardMarkup([
         [KeyboardButton("📍 ارسال موقعیت مکانی (لوکیشن نقشه)", request_location=True)],
         [KeyboardButton("❌ انصراف از خرید")]
-    ], resize_keyboard=True, one_time_keyboard=True)
+    ], resize_keyboard=True)
 
     await update.message.reply_text(
         "🏠 <b>مرحله ۵ از ۵:</b>\n"
@@ -395,7 +394,7 @@ async def order_address_step(update: Update, context: ContextTypes.DEFAULT_TYPE)
         postal_kb = ReplyKeyboardMarkup([
             [KeyboardButton("ندارم")],
             [KeyboardButton("❌ انصراف از خرید")]
-        ], resize_keyboard=True, one_time_keyboard=True)
+        ], resize_keyboard=True)
 
         await update.message.reply_text(
             f"✅ <b>موقعیت مکانی شما با موفقیت دریافت گردید.</b>\n"
@@ -424,7 +423,7 @@ async def order_address_step(update: Update, context: ContextTypes.DEFAULT_TYPE)
     postal_kb = ReplyKeyboardMarkup([
         [KeyboardButton("ندارم")],
         [KeyboardButton("❌ انصراف از خرید")]
-    ], resize_keyboard=True, one_time_keyboard=True)
+    ], resize_keyboard=True)
 
     await update.message.reply_text(
         "📮 لطفاً <b>کد پستی ۱۰ رقمی</b> را ارسال فرمایید (یا در صورت نداشتن دکمه «ندارم» را بزنید):\n"
@@ -476,12 +475,13 @@ async def show_order_confirmation(update: Update, context: ContextTypes.DEFAULT_
     f_deposit = to_fa_digits(f"{deposit:,}")
     f_remaining = to_fa_digits(f"{remaining:,}")
 
-    # پاک کردن کیبورد سفارشی و بستن آن در تلگرام
+    # ارسال کیبورد منوی اصلی جهت پایداری همیشگی دکمه‌های ربات
+    user_id = update.effective_user.id if update.effective_user else 0
     if update.message:
         try:
             await update.message.reply_text(
                 "📋 <i>در حال آماده‌سازی پیش‌نمایش نهایی سفارش...</i>",
-                reply_markup=ReplyKeyboardRemove(),
+                reply_markup=main_menu_keyboard(is_admin(user_id)),
                 parse_mode="HTML"
             )
         except Exception:
@@ -587,10 +587,22 @@ async def order_confirm_callback(update: Update, context: ContextTypes.DEFAULT_T
             "▫️ هیچ اطلاعاتی ثبت یا ذخیره نشد.\n"
             "▫️ در هر زمان می‌توانید از طریق منوی اصلی کاتالوگ فروشگاه را مشاهده یا سفارش جدیدی ثبت فرمایید."
         )
+        cancel_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏠 منوی اصلی فروشگاه", callback_data="back_to_main")]
+        ])
         try:
-            await query.edit_message_text(cancel_text, reply_markup=main_menu_keyboard(is_admin(user_id)), parse_mode="HTML")
+            await query.edit_message_text(cancel_text, reply_markup=cancel_kb, parse_mode="HTML")
         except Exception:
-            await query.message.reply_text(cancel_text, reply_markup=main_menu_keyboard(is_admin(user_id)), parse_mode="HTML")
+            await query.message.reply_text(cancel_text, reply_markup=cancel_kb, parse_mode="HTML")
+
+        try:
+            await query.message.reply_text(
+                "📋 <i>دکمه‌های منوی اصلی در پایین صفحه:</i>",
+                reply_markup=main_menu_keyboard(is_admin(user_id)),
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
 
         return ConversationHandler.END
 
@@ -812,6 +824,16 @@ async def finalize_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message:
             await update.message.reply_text(invoice_msg, reply_markup=kb, parse_mode="HTML")
 
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="🏠 <i>دکمه‌های منوی اصلی فروشگاه در دسترس شما قرار دارد:</i>",
+            reply_markup=main_menu_keyboard(is_admin(chat_id)),
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+
     # اطلاع‌رسانی ثبت سفارش جدید به ادمین‌ها به همراه موقعیت مکانی و شیوه ارسال
     loc_url = context.user_data.get("order_location_url", "")
     loc_info = f"\n🗺 <b>لوکیشن نقشه:</b> {loc_url}" if loc_url else ""
@@ -946,6 +968,16 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=reply_kb,
         parse_mode="HTML"
     )
+
+    try:
+        user_id = update.effective_user.id if update.effective_user else 0
+        await update.message.reply_text(
+            "🏠 <i>دکمه‌های منوی اصلی فروشگاه در دسترس شما قرار دارد:</i>",
+            reply_markup=main_menu_keyboard(is_admin(user_id)),
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
 
     method_title = "📮 پست پیشتاز (تسویه کامل - بدون بیعانه)" if is_post else "🚚 باربری (بیعانه + مانده در محل)"
     amt_paid = order.get("total_price", "0") if is_post else order.get("deposit_amount", "0") if order else "0"
