@@ -136,6 +136,11 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             InlineKeyboardButton("🤖 تنظیمات هوش مصنوعی مشخصات کالا", callback_data="adm_ai_settings")
         ],
         
+        # ۷. پشتیبان‌گیری و بازگردانی کلی سیستم (Backup & Restore)
+        [
+            InlineKeyboardButton("💾 پشتیبان‌گیری و بازگردانی داده‌ها (Backup)", callback_data="adm_backup_menu")
+        ],
+        
         # بازگشت به منوی اصلی ربات
         [InlineKeyboardButton("🔙 بازگشت به منوی اصلی فروشگاه", callback_data="back_to_main")]
     ])
@@ -1638,5 +1643,188 @@ async def admin_ai_set_provider_handler(update: Update, context: ContextTypes.DE
             pass
 
     await admin_ai_settings_menu(update, context)
+
+
+# =====================================================================
+# 💾 منوی اختصاصی پشتیبان‌گیری و بازگردانی (Backup & Restore)
+# =====================================================================
+
+async def admin_backup_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """منوی اصلی پشتیبان‌گیری و بازگردانی اطلاعات سیستم"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    from backup_service import load_backup_settings, _collect_database_summary
+
+    settings = load_backup_settings()
+    auto_enabled = settings.get("auto_backup_enabled", False)
+    interval_h = settings.get("interval_hours", 24)
+    last_auto = settings.get("last_auto_backup") or "تاکنون انجام نشده"
+
+    db_stats = _collect_database_summary("bot_data.db")
+    orders_cnt = db_stats.get("orders", 0)
+    channels_cnt = db_stats.get("monitored_channels", 0)
+
+    # کاتالوگ و عکس‌ها
+    cat_cnt = 0
+    if os.path.exists("catalog_products.json"):
+        try:
+            with open("catalog_products.json", "r", encoding="utf-8") as f:
+                cat_cnt = len(json.load(f))
+        except Exception:
+            pass
+
+    photos_cnt = 0
+    if os.path.exists("verified_photos.json"):
+        try:
+            with open("verified_photos.json", "r", encoding="utf-8") as f:
+                photos_cnt = len(json.load(f))
+        except Exception:
+            pass
+
+    auto_status_text = "✅ فعال (ارسال فایل هر ۲۴ ساعت به پیوی مدیر)" if auto_enabled else "🛑 غیرفعال (فقط دستی)"
+
+    text = (
+        f"💾 <b>مدیریت پشتیبان‌گیری و بازگردانی داده‌ها (Backup / Restore):</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 <b>وضعیت داده‌های کنونی سیستم:</b>\n"
+        f"▫️ سفارش‌ها و خریدهای ثبت‌شده: <b>{orders_cnt:,}</b> سفارش\n"
+        f"▫️ کاتالوگ فعال محصولات: <b>{cat_cnt:,}</b> کالا\n"
+        f"▫️ تصاویر اختصاصی متصل‌شده: <b>{photos_cnt:,}</b> کالا\n"
+        f"▫️ کانال‌های متصل و تحت پایش: <b>{channels_cnt}</b> کانال\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"⏰ <b>وضعیت بک‌آپ‌گیری خودکار ۲۴ ساعته:</b>\n"
+        f"▫️ وضعیت: <b>{auto_status_text}</b>\n"
+        f"▫️ آخرین بک‌آپ خودکار: <code>{last_auto}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👇 جهت عملیات مورد نظر، یکی از گزینه‌های زیر را انتخاب فرمایید:"
+    )
+
+    toggle_btn_text = "🛑 غیرفعال‌سازی بک‌آپ خودکار" if auto_enabled else "⏰ فعال‌سازی بک‌آپ خودکار ۲۴ ساعته"
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📦 دانلود فوری فایل پشتیبان (Full Backup .zip)", callback_data="adm_backup_download")],
+        [InlineKeyboardButton(toggle_btn_text, callback_data="adm_backup_toggle_auto")],
+        [InlineKeyboardButton("♻️ بازگردانی یا ادغام فایل بک‌آپ (Upload)", callback_data="adm_backup_upload_prompt")],
+        [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+
+async def admin_backup_download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ایجاد و ارسال فایل زیپ بک‌آپ به پیوی ادمین در تلگرام"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    if update.callback_query:
+        await update.callback_query.answer("⏳ در حال ساخت پکیج پشتیبان...", show_alert=False)
+
+    status_msg = await update.effective_message.reply_text(
+        "⏳ <b>در حال ایجاد فایل فشرده پشتیبان کلی (.zip)...</b>\n"
+        "▫️ فشرده‌سازی دیتابیس سفارش‌ها، فاکتورها، عکس‌ها، کاتالوگ و تنظیمات",
+        parse_mode="HTML"
+    )
+
+    from backup_service import create_full_backup_zip
+    zip_path, manifest = create_full_backup_zip()
+
+    file_size_kb = round(os.path.getsize(zip_path) / 1024, 1)
+
+    caption = (
+        f"📦 <b>پکیج پشتیبان کامل سیستم (Full Backup)</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📁 نام فایل: <code>{manifest['backup_name']}</code>\n"
+        f"📅 تاریخ و ساعت: <b>{manifest['created_at']}</b>\n"
+        f"⚖️ حجم فایل: <b>{file_size_kb} کیلوبایت</b>\n\n"
+        f"📋 <b>محتویات داخل پکیج:</b>\n"
+        f"▫️ سفارش‌ها و فاکتورها: <b>{manifest['orders_count']}</b> مورد\n"
+        f"▫️ کاتالوگ محصولات: <b>{manifest['products_catalog_count']}</b> کالا\n"
+        f"▫️ ارتباط تصاویر و آلبوم‌ها: <b>{manifest['verified_photos_count']}</b> مورد\n"
+        f"▫️ دیتابیس SQLite و تنظیمات بانکی و هوش مصنوعی\n\n"
+        f"💡 <i>این فایل را در جای امن نگهداری فرمایید. در صورت انتقال به هاست جدید یا نیاز به بازگردانی، می‌توانید همین فایل زیپ را برای ربات ارسال نمایید.</i>"
+    )
+
+    try:
+        with open(zip_path, "rb") as f_zip:
+            await context.bot.send_document(
+                chat_id=user.id,
+                document=f_zip,
+                filename=manifest["backup_name"],
+                caption=caption,
+                parse_mode="HTML"
+            )
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"Error sending backup zip: {e}")
+        await status_msg.edit_text(f"❌ خطا در ارسال فایل پشتیبان: {e}")
+
+
+async def admin_backup_toggle_auto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """سوییچ فعال یا غیرفعال بودن بک‌آپ خودکار ۲۴ ساعته"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    from backup_service import load_backup_settings, set_auto_backup_state
+
+    curr = load_backup_settings()
+    new_state = not curr.get("auto_backup_enabled", False)
+    set_auto_backup_state(new_state)
+
+    state_msg = "✅ پشتیبان‌گیری خودکار ۲۴ ساعته فعال شد. هر ۲۴ ساعت یک فایل کامل به تلگرام شما ارسال می‌شود." if new_state else "🛑 پشتیبان‌گیری خودکار غیرفعال گردید."
+    if update.callback_query:
+        try:
+            await update.callback_query.answer(state_msg, show_alert=True)
+        except Exception:
+            pass
+
+    await admin_backup_menu(update, context)
+
+
+async def admin_backup_upload_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """راهنمای آپلود فایل زیپ بک‌آپ توسط ادمین"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    context.user_data["awaiting_backup_zip_file"] = True
+
+    text = (
+        f"📥 <b>ارسال فایل پشتیبان جهت بازگردانی یا ادغام:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"لطفاً فایل پشتیبان با پسوند <b>.zip</b> (که قبلاً از سیستم دریافت کرده‌اید) را در همین چت <b>ارسال (یا فوروارد)</b> فرمایید.\n\n"
+        f"✨ <b>پس از ارسال فایل:</b>\n"
+        f"ربات محتویات را بررسی کرده و به شما ۲ گزینه ارائه می‌دهد:\n"
+        f"۱️⃣ <b>ادغام هوشمند (Smart Merge):</b> اضافه کردن سفارش‌ها و عکس‌های جدید بدون حذف داده‌های فعلی.\n"
+        f"۲️⃣ <b>بازگردانی کامل (Replace All):</b> جایگزینی ۱۰۰٪ سیستم با فایل بک‌آپ (همراه با اسنپ‌شات ایمنی).\n\n"
+        f"❌ جهت انصراف: /cancel"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 بازگشت به منوی پشتیبان", callback_data="adm_backup_menu")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
 
 

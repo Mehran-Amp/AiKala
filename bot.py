@@ -128,6 +128,10 @@ from admin_panel import (
     handle_admin_broadcast_input,
     admin_ai_settings_menu,
     admin_ai_set_provider_handler,
+    admin_backup_menu,
+    admin_backup_download_handler,
+    admin_backup_toggle_auto_handler,
+    admin_backup_upload_prompt,
     sync_photos_command,
     setphoto_command,
     clearphotos_command,
@@ -366,8 +370,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1] if update.message.photo else None
     doc = update.message.document
 
-    # تشخیص فایل اکسل یا CSV
+    # تشخیص فایل اکسل یا CSV یا ZIP پشتیبان
     is_excel = False
+    is_zip_backup = False
     if doc:
         d_name = (doc.file_name or "").lower()
         d_mime = (doc.mime_type or "").lower()
@@ -381,6 +386,80 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             or "csv" in d_mime
         ):
             is_excel = True
+        elif d_name.endswith(".zip") or "zip" in d_mime:
+            is_zip_backup = True
+
+    # ۰. اگر فایل ZIP پشتیبان ارسال شده است
+    if is_zip_backup:
+        if not adm:
+            await update.message.reply_text("⛔️ بازگردانی فایل پشتیبان فقط توسط مدیران فروشگاه امکان‌پذیر است.")
+            return
+
+        file_title = doc.file_name or "فایل پشتیبان"
+        status_msg = await update.message.reply_text(
+            f"🔍 <b>در حال بررسی ساختار فایل پشتیبان «{html.escape(file_title)}»...</b>",
+            parse_mode="HTML"
+        )
+        try:
+            file_obj = await doc.get_file()
+            file_bytes = await file_obj.download_as_bytearray()
+            from backup_service import inspect_backup_zip
+            inspected = inspect_backup_zip(io.BytesIO(file_bytes))
+
+            if not inspected:
+                await status_msg.edit_text(
+                    "❌ <b>فایل پشتیبان نامعتبر است!</b>\n\n"
+                    "این فایل زیپ حاوی ساختار استاندارد بک‌آپ سیستم (دیتابیس یا کاتالوگ محصولات) نمی‌باشد.\n"
+                    "لطفاً مطمئن شوید فایلی را ارسال می‌کنید که قبلاً از همین ربات دریافت کرده‌اید.",
+                    parse_mode="HTML"
+                )
+                return
+
+            # ذخیره بایت‌ها یا مسیر فایل موقت جهت ریستور
+            os.makedirs("backups/temp", exist_ok=True)
+            temp_restore_path = f"backups/temp/restore_{int(time.time())}.zip"
+            with open(temp_restore_path, "wb") as f_tmp:
+                f_tmp.write(file_bytes)
+
+            context.user_data["pending_restore_file"] = temp_restore_path
+            context.user_data.pop("awaiting_backup_zip_file", None)
+
+            c_date = inspected.get("created_at", "نامشخص")
+            b_orders = inspected.get("orders_count", 0)
+            b_prods = inspected.get("products_catalog_count", 0)
+            b_photos = inspected.get("verified_photos_count", 0)
+
+            confirm_text = (
+                f"📦 <b>فایل پشتیبان معتبر با موفقیت تایید گردید:</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"📁 نام فایل: <code>{html.escape(file_title)}</code>\n"
+                f"📅 تاریخ ایجاد: <b>{c_date}</b>\n"
+                f"▫️ سفارش‌ها و فاکتورها: <b>{b_orders}</b> مورد\n"
+                f"▫️ کاتالوگ محصولات: <b>{b_prods}</b> کالا\n"
+                f"▫️ تصاویر اختصاصی متصل: <b>{b_photos}</b> کالا\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"❓ <b>نحوه بازگردانی اطلاعات را مشخص فرمایید:</b>\n\n"
+                f"➕ <b>۱. ادغام هوشمند (Smart Merge):</b>\n"
+                f"سفارش‌ها، تصاویر و مشخصات جدید بدون حذف هیچ داده‌ای به سیستم فعلی افزوده می‌شوند. (پیشنهادی)\n\n"
+                f"♻️ <b>۲. بازگردانی کامل و جایگزینی (Full Replace):</b>\n"
+                f"کل دیتابیس و کاتالوگ فعلی با این فایل زیپ جایگزین می‌شود. (یک نسخه اسنپ‌شات ایمنی به صورت خودکار قبل از رونویسی ذخیره می‌گردد)"
+            )
+
+            confirm_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ ۱. ادغام هوشمند (پیشنهادی - حفظ داده‌های فعلی)", callback_data="adm_restore_smart_merge")],
+                [InlineKeyboardButton("♻️ ۲. بازگردانی کامل (جایگزینی تمام داده‌ها)", callback_data="adm_restore_full_replace")],
+                [
+                    InlineKeyboardButton("❌ انصراف و لغو", callback_data="adm_restore_cancel"),
+                    InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back_panel")
+                ]
+            ])
+
+            await status_msg.edit_text(confirm_text, reply_markup=confirm_kb, parse_mode="HTML")
+            return
+        except Exception as err:
+            logger.error(f"Error inspecting backup zip: {err}", exc_info=True)
+            await status_msg.edit_text(f"❌ خطا در پردازش فایل زیپ: {html.escape(str(err))}", parse_mode="HTML")
+            return
 
     # ۱. اگر فایل اکسل ارسال شده است
     if is_excel:
@@ -1635,6 +1714,75 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         target_provider = data.replace("adm_ai_set_", "").strip()
         await admin_ai_set_provider_handler(update, context, target_provider)
 
+    # ─── بخش پشتیبان‌گیری و بازگردانی کلی سیستم ───
+    elif data == "adm_backup_menu":
+        await admin_backup_menu(update, context)
+
+    elif data == "adm_backup_download":
+        await admin_backup_download_handler(update, context)
+
+    elif data == "adm_backup_toggle_auto":
+        await admin_backup_toggle_auto_handler(update, context)
+
+    elif data == "adm_backup_upload_prompt":
+        await admin_backup_upload_prompt(update, context)
+
+    elif data == "adm_restore_smart_merge":
+        if not is_admin(update.effective_user.id):
+            await query.answer("دسترسی غیرمجاز", show_alert=True)
+            return
+
+        zip_file = context.user_data.pop("pending_restore_file", None)
+        if not zip_file or not os.path.exists(zip_file):
+            await query.answer("فایل بک‌آپ منقضی شده است. لطفاً مجدداً فایل را ارسال فرمایید.", show_alert=True)
+            return
+
+        await query.answer("در حال ادغام اطلاعات...", show_alert=False)
+        from backup_service import restore_smart_merge
+        success, res_text, stats = restore_smart_merge(zip_file)
+        try:
+            os.remove(zip_file)
+        except Exception:
+            pass
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+        ])
+        await query.edit_message_text(res_text, reply_markup=kb, parse_mode="HTML")
+
+    elif data == "adm_restore_full_replace":
+        if not is_admin(update.effective_user.id):
+            await query.answer("دسترسی غیرمجاز", show_alert=True)
+            return
+
+        zip_file = context.user_data.pop("pending_restore_file", None)
+        if not zip_file or not os.path.exists(zip_file):
+            await query.answer("فایل بک‌آپ منقضی شده است. لطفاً مجدداً فایل را ارسال فرمایید.", show_alert=True)
+            return
+
+        await query.answer("در حال بازگردانی کامل سیستم...", show_alert=False)
+        from backup_service import restore_full_replace
+        success, res_text = restore_full_replace(zip_file)
+        try:
+            os.remove(zip_file)
+        except Exception:
+            pass
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+        ])
+        await query.edit_message_text(res_text, reply_markup=kb, parse_mode="HTML")
+
+    elif data == "adm_restore_cancel":
+        await query.answer("عملیات بازگردانی لغو گردید.")
+        zip_file = context.user_data.pop("pending_restore_file", None)
+        if zip_file and os.path.exists(zip_file):
+            try:
+                os.remove(zip_file)
+            except Exception:
+                pass
+        await admin_backup_menu(update, context)
+
     elif data == "adm_broadcast_ask":
         await admin_broadcast_ask(update, context)
 
@@ -2159,6 +2307,15 @@ def main():
             logger.info(f"📸 Image Channel: {chat.title} ({PHOTOS_CHANNEL}) connected.")
         except Exception as e:
             logger.warning(f"⚠️ Image Channel ({PHOTOS_CHANNEL}): {e}")
+
+        # راه‌اندازی تسک پس‌زمینه پشتیبان‌گیری خودکار ۲۴ ساعته (پیش‌فرض غیرفعال)
+        try:
+            from backup_service import auto_backup_background_task
+            admin_ids = get_all_admin_ids()
+            asyncio.create_task(auto_backup_background_task(application.bot, admin_ids))
+            logger.info("💾 Auto-backup background task registered successfully.")
+        except Exception as e:
+            logger.warning(f"Could not register auto-backup background task: {e}")
 
     app.post_init = post_init
     app.run_polling(drop_pending_updates=True)
