@@ -164,6 +164,8 @@ async def start_order_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not inq and user_id:
         inq = await db.get_latest_user_inquiry(user_id, pid)
 
+    shipping_method = (inq.get("shipping_method") if inq else "") or "freight"
+
     total_price = 0
     if inq:
         p_raw = str(inq.get("final_price") or inq.get("admin_response") or "")
@@ -184,14 +186,18 @@ async def start_order_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 total_price = 0
 
-    # محاسبه بیعانه رند شده به عنوان پیش‌پرداخت بر اساس درصد تنظیم‌شده
+    # محاسبه بیعانه رند شده به عنوان پیش‌پرداخت بر اساس شیوه ارسال
     deposit = 0
     if total_price > 0:
-        dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
-        deposit = int(round((total_price * (dep_pct / 100.0)) / 10000)) * 10000
-        if deposit == 0:
-            deposit = int(round((total_price * (dep_pct / 100.0)) / 1000)) * 1000
+        if shipping_method == "post":
+            deposit = total_price
+        else:
+            dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
+            deposit = int(round((total_price * (dep_pct / 100.0)) / 10000)) * 10000
+            if deposit == 0:
+                deposit = int(round((total_price * (dep_pct / 100.0)) / 1000)) * 1000
 
+    context.user_data["order_shipping_method"] = shipping_method
     context.user_data["order_total_price"] = total_price
     context.user_data["order_deposit"] = deposit
     context.user_data["order_inquiry_id"] = req_id or (inq.get("id") if inq else None)
@@ -441,6 +447,9 @@ async def show_order_confirmation(update: Update, context: ContextTypes.DEFAULT_
     prod = context.user_data.get("order_product", {})
     total_price = context.user_data.get("order_total_price", 0)
     deposit = context.user_data.get("order_deposit", 0)
+    shipping_method = context.user_data.get("order_shipping_method", "freight")
+    is_post = (shipping_method == "post")
+    dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
 
     if total_price == 0 or deposit == 0:
         clean_p = _normalize_digits(str(prod.get("price", "0"))).replace(",", "").replace("،", "").strip()
@@ -448,15 +457,20 @@ async def show_order_confirmation(update: Update, context: ContextTypes.DEFAULT_
         if digits:
             try:
                 total_price = int("".join(digits))
-                dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
-                deposit = int(round((total_price * (dep_pct / 100.0)) / 10000)) * 10000
-                if deposit == 0:
-                    deposit = int(round((total_price * (dep_pct / 100.0)) / 1000)) * 1000
+                if is_post:
+                    deposit = total_price
+                else:
+                    deposit = int(round((total_price * (dep_pct / 100.0)) / 10000)) * 10000
+                    if deposit == 0:
+                        deposit = int(round((total_price * (dep_pct / 100.0)) / 1000)) * 1000
             except Exception:
                 pass
 
-    remaining = max(0, total_price - deposit)
-    dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
+    if is_post:
+        deposit = total_price
+        remaining = 0
+    else:
+        remaining = max(0, total_price - deposit)
 
     f_total_price = to_fa_digits(f"{total_price:,}")
     f_deposit = to_fa_digits(f"{deposit:,}")
@@ -482,13 +496,25 @@ async def show_order_confirmation(update: Update, context: ContextTypes.DEFAULT_
     loc_url = context.user_data.get("order_location_url", "")
     loc_display = f"\n▫️ <b>موقعیت روی نقشه:</b> <a href=\"{loc_url}\">مشاهده در نقشه</a>" if loc_url else ""
 
+    if is_post:
+        method_badge = "📮 پست پیشتاز (تسویه ۱۰۰٪ کامل - بدون بیعانه)"
+        deposit_line = f"💳 <b>مبلغ قابل واریز (تسویه ۱۰۰٪ کامل):</b> <b>{f_total_price} تومان</b>\n"
+        remaining_line = "▫️ <b>مانده در محل:</b> <b>۰ تومان (تسویه کامل قبل از ارسال پستی)</b>\n"
+        confirm_step_text = "صدور پیش‌فاکتور رسمی و دریافت مشخصات حساب بانکی جهت تسویه کامل وجه"
+    else:
+        method_badge = f"🚚 باربری / پیک (بیعانه {dep_pct}٪ + تسویه در محل)"
+        deposit_line = f"💳 <b>مبلغ بیعانه پیش‌پرداخت ({dep_pct}٪):</b> <b>{f_deposit} تومان</b>\n"
+        remaining_line = f"▫️ <b>مانده تسویه در محل پس از تست سلامت:</b> <b>{f_remaining} تومان</b>\n"
+        confirm_step_text = "صدور پیش‌فاکتور رسمی و دریافت مشخصات حساب بانکی جهت واریز بیعانه"
+
     confirm_msg = (
         "📋 <b>پیش‌نمایش و بررسی نهایی مشخصات سفارش:</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"📦 <b>کالای انتخابی:</b> {prod.get('name', 'کالای سفارشی')}\n"
+        f"🛵 <b>نحوه ارسال:</b> <b>{method_badge}</b>\n"
         f"💰 <b>مبلغ کل کالا:</b> <b>{f_total_price} تومان</b>\n"
-        f"💳 <b>مبلغ بیعانه پیش‌پرداخت ({dep_pct}٪):</b> <b>{f_deposit} تومان</b>\n"
-        f"▫️ <b>مانده تسویه در محل پس از تست سلامت:</b> <b>{f_remaining} تومان</b>\n"
+        f"{deposit_line}"
+        f"{remaining_line}"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "👤 <b>مشخصات تحویل‌گیرنده و نشانی پستی:</b>\n"
         f"▫️ <b>نام و نام‌خانوادگی:</b> {name}\n"
@@ -500,7 +526,7 @@ async def show_order_confirmation(update: Update, context: ContextTypes.DEFAULT_
         f"▫️ <b>کد پستی ۱۰ رقمی:</b> <code>{postal}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "❓ <b>خریدار گرامی، آیا اطلاعات واردشده فوق را تایید می‌فرمایید؟</b>\n\n"
-        "▫️ <b>✅ تایید و ثبت نهایی:</b> صدور پیش‌فاکتور رسمی و دریافت مشخصات حساب بانکی جهت واریز بیعانه\n"
+        f"▫️ <b>✅ تایید و ثبت نهایی:</b> {confirm_step_text}\n"
         "▫️ <b>✏️ اصلاح مشخصات:</b> ویرایش مجدد اطلاعات وارد شده\n"
         "▫️ <b>❌ لغو کامل سفارش:</b> انصراف کامل از خرید و بازگشت به منو"
     )
@@ -591,20 +617,30 @@ async def finalize_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_price = context.user_data.get("order_total_price", 0)
     deposit = context.user_data.get("order_deposit", 0)
 
+    shipping_method = context.user_data.get("order_shipping_method", "freight")
+    is_post = (shipping_method == "post")
+    dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
+
     if total_price == 0 or deposit == 0:
         clean_p = _normalize_digits(str(prod.get("price", "0"))).replace(",", "").replace("،", "").strip()
         digits = re.findall(r'\d+', clean_p)
         if digits:
             try:
                 total_price = int("".join(digits))
-                dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
-                deposit = int(round((total_price * (dep_pct / 100.0)) / 10000)) * 10000
-                if deposit == 0:
-                    deposit = int(round((total_price * (dep_pct / 100.0)) / 1000)) * 1000
+                if is_post:
+                    deposit = total_price
+                else:
+                    deposit = int(round((total_price * (dep_pct / 100.0)) / 10000)) * 10000
+                    if deposit == 0:
+                        deposit = int(round((total_price * (dep_pct / 100.0)) / 1000)) * 1000
             except Exception:
                 pass
 
-    remaining = max(0, total_price - deposit)
+    if is_post:
+        deposit = total_price
+        remaining = 0
+    else:
+        remaining = max(0, total_price - deposit)
 
     order_data = {
         "order_code": order_code,
@@ -620,12 +656,13 @@ async def finalize_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "postal_code": context.user_data.get("order_postal"),
         "total_price": str(total_price),
         "deposit_amount": str(deposit),
+        "shipping_method": shipping_method,
         "status": "Awaiting_Payment"
     }
 
     await db.create_order(order_data)
 
-    # ۱. تولید پیش‌فاکتور رسمی دیجیتال (Ultra HD PNG) با برچسب نارنجی در انتظار بیعانه
+    # ۱. تولید پیش‌فاکتور رسمی دیجیتال (Ultra HD PNG) با برچسب متناسب شیوه ارسال
     invoice_path = None
     out_png = f"invoices/pre_invoice_{order_code}.png"
     try:
@@ -654,7 +691,8 @@ async def finalize_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     bank_lines = []
     if card_number:
-        bank_lines.append(f"▫️ شماره کارت واریز بیعانه: <code>{card_number}</code>")
+        card_lbl = "▫️ شماره کارت جهت تسویه حساب کامل سفارش:" if is_post else "▫️ شماره کارت واریز بیعانه:"
+        bank_lines.append(f"{card_lbl} <code>{card_number}</code>")
     if shaba_html:
         bank_lines.append(f"▫️ شماره شبا بانکی: {shaba_html}")
     if card_holder:
@@ -665,6 +703,19 @@ async def finalize_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         bank_block = "\n".join(bank_lines)
 
+    if is_post:
+        doc_status = "پیش‌فاکتور رسمی (در انتظار تسویه کامل وجه)"
+        pay_amount_line = f"💳 <b>مبلغ قابل واریز (تسویه ۱۰۰٪ کامل - بدون بیعانه):</b> <b>{f_total_price} تومان</b>"
+        rem_amount_line = "▫️ <b>مانده در محل:</b> <b>۰ تومان (تسویه کامل قبل از ارسال پستی)</b>"
+        shipping_desc_line = "📮 <b>نحوه ارسال:</b> پست پیشتاز (ارسال مستقیم به سراسر کشور)"
+        note_text = f"⚠️ <i>نکته مهم: این سفارش (محصولات و لوازم ریز) با پست پیشتاز ارسال می‌گردد. با توجه به ضوابط شرکت پست، لطفاً کل مبلغ ({f_total_price} تومان) را از طریق کارت به کارت یا شماره شبا واریز و عکس فیش را ارسال فرمایید تا مرسوله به همراه بیمه سلامت و کد رهگیری پستی تحویل پست گردد.</i>"
+    else:
+        doc_status = "پیش‌فاکتور رسمی (در انتظار واریز بیعانه)"
+        pay_amount_line = f"💳 <b>مبلغ بیعانه پیش‌پرداخت ({dep_pct}٪):</b> <b>{f_deposit} تومان</b>"
+        rem_amount_line = f"▫️ <b>مانده تسویه پس از تحویل و تست سلامت:</b> <b>{f_remaining} تومان</b>"
+        shipping_desc_line = f"🚚 <b>نحوه ارسال:</b> باربری / پیک (تحویل درب منزل با بیعانه {dep_pct}٪)"
+        note_text = f"⚠️ <i>نکته مهم: جهت قطعی شدن سفارش و صدور فاکتور نهایی فروش با مهر شرکتی، لطفاً بیعانه ({f_deposit} تومان) را از طریق کارت به کارت یا شماره شبا واریز و عکس فیش را ارسال فرمایید.</i>"
+
     invoice_msg = (
         f"🧾 <b>پیش‌فاکتور رسمی سفارش @AiKala_bot هوشمند کالا</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -673,16 +724,17 @@ async def finalize_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 <b>تحویل‌گیرنده:</b> {order_data['full_name']}\n"
         f"📱 <b>شماره تماس:</b> {order_data['phone1']}\n"
         f"📍 <b>مقصد تحویل:</b> {order_data['province_city']} - {order_data['address']}\n"
+        f"{shipping_desc_line}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏳ <b>وضعیت سند: پیش‌فاکتور رسمی (در انتظار واریز بیعانه)</b>\n"
-        f"💰 <b>قیمت قطعی روز با احتساب هزینه ارسال درب منزل:</b> <b>{f_total_price} تومان</b>\n"
-        f"💳 <b>مبلغ بیعانه پیش‌پرداخت ({getattr(config, 'DEPOSIT_PERCENT', 8)}٪):</b> <b>{f_deposit} تومان</b>\n"
-        f"▫️ <b>مانده تسویه پس از تحویل و تست سلامت:</b> <b>{f_remaining} تومان</b>\n"
+        f"⏳ <b>وضعیت سند: {doc_status}</b>\n"
+        f"💰 <b>قیمت قطعی روز کالا:</b> <b>{f_total_price} تومان</b>\n"
+        f"{pay_amount_line}\n"
+        f"{rem_amount_line}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{bank_block}\n"
         f"⏱ <b>مهلت اعتبار رزرو انبار:</b> ۵ ساعت کاری\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ <i>نکته مهم: جهت قطعی شدن سفارش و صدور فاکتور نهایی فروش با مهر شرکتی، لطفاً بیعانه ({f_deposit} تومان) را از طریق کارت به کارت یا شماره شبا واریز و عکس فیش را ارسال فرمایید.</i>"
+        f"{note_text}"
     )
 
     kb = InlineKeyboardMarkup([
@@ -695,16 +747,30 @@ async def finalize_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id if update.effective_chat else update.effective_user.id
 
     if invoice_path and os.path.exists(invoice_path):
-        photo_caption = (
-            f"🧾 <b>تصویر پیش‌فاکتور رسمی سفارش @AiKala_bot</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔖 شماره سفارش: <code>{order_code}</code>\n"
-            f"📦 کالا: {prod.get('name', 'کالای سفارشی')}\n"
-            f"💰 قیمت کل: <b>{f_total_price} تومان</b>\n"
-            f"💳 بیعانه پیش‌پرداخت ({getattr(config, 'DEPOSIT_PERCENT', 8)}٪): <b>{f_deposit} تومان</b>\n"
-            f"▫️ مانده تسویه در محل: <b>{f_remaining} تومان</b>\n"
-            f"⏳ وضعیت: در انتظار واریز بیعانه"
-        )
+        if is_post:
+            photo_caption = (
+                f"🧾 <b>تصویر پیش‌فاکتور رسمی سفارش @AiKala_bot</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔖 شماره سفارش: <code>{order_code}</code>\n"
+                f"📦 کالا: {prod.get('name', 'کالای سفارشی')}\n"
+                f"📮 نحوه ارسال: <b>پست پیشتاز</b>\n"
+                f"💰 مبلغ کل: <b>{f_total_price} تومان</b>\n"
+                f"💳 مبلغ قابل واریز: <b>{f_total_price} تومان (تسویه کامل)</b>\n"
+                f"▫️ مانده در محل: <b>۰ تومان</b>\n"
+                f"⏳ وضعیت: در انتظار تسویه کامل سفارش"
+            )
+        else:
+            photo_caption = (
+                f"🧾 <b>تصویر پیش‌فاکتور رسمی سفارش @AiKala_bot</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔖 شماره سفارش: <code>{order_code}</code>\n"
+                f"📦 کالا: {prod.get('name', 'کالای سفارشی')}\n"
+                f"🚚 نحوه ارسال: <b>باربری / تحویل در محل</b>\n"
+                f"💰 قیمت کل: <b>{f_total_price} تومان</b>\n"
+                f"💳 بیعانه پیش‌پرداخت ({dep_pct}٪): <b>{f_deposit} تومان</b>\n"
+                f"▫️ مانده تسویه در محل: <b>{f_remaining} تومان</b>\n"
+                f"⏳ وضعیت: در انتظار واریز بیعانه"
+            )
 
         try:
             with open(invoice_path, "rb") as f_img:
@@ -746,11 +812,14 @@ async def finalize_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message:
             await update.message.reply_text(invoice_msg, reply_markup=kb, parse_mode="HTML")
 
-    # اطلاع‌رسانی ثبت سفارش جدید به ادمین‌ها به همراه موقعیت مکانی
+    # اطلاع‌رسانی ثبت سفارش جدید به ادمین‌ها به همراه موقعیت مکانی و شیوه ارسال
     loc_url = context.user_data.get("order_location_url", "")
     loc_info = f"\n🗺 <b>لوکیشن نقشه:</b> {loc_url}" if loc_url else ""
     order_lat = context.user_data.get("order_lat")
     order_lon = context.user_data.get("order_lon")
+
+    admin_shipping_text = "📮 پست پیشتاز (تسویه کامل - بدون بیعانه)" if is_post else f"🚚 باربری (بیعانه {dep_pct}٪ + مانده در محل)"
+    admin_fin_text = f"💰 مبلغ کل (قابل واریز): {f_total_price} تومان (تسویه ۱۰۰٪)" if is_post else f"💰 مبلغ کل: {f_total_price} تومان | بیعانه ({dep_pct}٪): {f_deposit} تومان"
 
     for adm_id in ADMIN_IDS:
         try:
@@ -765,7 +834,8 @@ async def finalize_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🔖 کد سفارش: <code>{order_code}</code>\n"
                     f"👤 خریدار: <b>{order_data['full_name']}</b> (<code>{order_data['phone1']}</code>)\n"
                     f"📦 کالا: {prod.get('name')}\n"
-                    f"💰 مبلغ کل: {f_total_price} تومان | بیعانه: {f_deposit} تومان\n"
+                    f"🛵 نحوه ارسال: <b>{admin_shipping_text}</b>\n"
+                    f"{admin_fin_text}\n"
                     f"📍 مقصد: {order_data['province_city']}\n"
                     f"🏠 نشانی: {order_data['address']}{loc_info}{admin_note}"
                 ),
@@ -789,7 +859,7 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     for key in [
         "order_name", "order_phone1", "order_phone2", "order_city",
         "order_address", "order_postal", "order_product", "order_total_price",
-        "order_deposit", "order_inquiry_id", "order_location_url",
+        "order_deposit", "order_shipping_method", "order_inquiry_id", "order_location_url",
         "order_lat", "order_lon"
     ]:
         context.user_data.pop(key, None)
@@ -802,7 +872,7 @@ async def cancel_and_handle_nav_callback(update: Update, context: ContextTypes.D
     for key in [
         "order_name", "order_phone1", "order_phone2", "order_city",
         "order_address", "order_postal", "order_product", "order_total_price",
-        "order_deposit", "order_inquiry_id", "order_location_url",
+        "order_deposit", "order_shipping_method", "order_inquiry_id", "order_location_url",
         "order_lat", "order_lon"
     ]:
         context.user_data.pop(key, None)
@@ -858,6 +928,10 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await db.update_order_status(order_code, status="Receipt_Uploaded", receipt_file_id=file_id)
 
+    order = await db.get_order_by_code(order_code)
+    shipping_method = order.get("shipping_method", "freight") if order else "freight"
+    is_post = (shipping_method == "post")
+
     reply_kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 پیگیری لحظه‌ای وضعیت سفارش", callback_data=f"track_ord|{order_code}")],
         [InlineKeyboardButton("📞 پشتیبانی و پیگیری مالی", callback_data="show_support")],
@@ -873,6 +947,13 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode="HTML"
     )
 
+    method_title = "📮 پست پیشتاز (تسویه کامل - بدون بیعانه)" if is_post else "🚚 باربری (بیعانه + مانده در محل)"
+    amt_paid = order.get("total_price", "0") if is_post else order.get("deposit_amount", "0") if order else "0"
+    try:
+        f_amt = f"{int(amt_paid):,} تومان"
+    except Exception:
+        f_amt = f"{amt_paid} تومان"
+
     for adm_id in ADMIN_IDS:
         try:
             adm_kb = InlineKeyboardMarkup([
@@ -884,7 +965,14 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_photo(
                 chat_id=adm_id,
                 photo=file_id,
-                caption=f"🔔 <b>فیش واریزی جدید دریافت شد!</b>\nکد سفارش: <code>{order_code}</code>\nکاربر: @{update.effective_user.username}",
+                caption=(
+                    f"🔔 <b>فیش واریزی جدید دریافت شد!</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🔖 کد سفارش: <code>{order_code}</code>\n"
+                    f"🛵 شیوه ارسال: <b>{method_title}</b>\n"
+                    f"💳 مبلغ واریزی مورد انتظار: <b>{f_amt}</b>\n"
+                    f"👤 کاربر: @{update.effective_user.username}"
+                ),
                 reply_markup=adm_kb,
                 parse_mode="HTML"
             )

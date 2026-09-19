@@ -114,6 +114,7 @@ class Database:
                     status TEXT DEFAULT 'Pending',
                     admin_response TEXT,
                     final_price TEXT,
+                    shipping_method TEXT DEFAULT 'freight',
                     invoice_link TEXT,
                     request_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
@@ -133,6 +134,7 @@ class Database:
                     postal_code TEXT,
                     total_price TEXT DEFAULT '0',
                     deposit_amount TEXT,
+                    shipping_method TEXT DEFAULT 'freight',
                     receipt_file_id TEXT,
                     receipt_text TEXT,
                     status TEXT DEFAULT 'Awaiting_Payment',
@@ -262,11 +264,15 @@ class Database:
                     await db.execute("ALTER TABLE user_requests ADD COLUMN product_id TEXT DEFAULT '';")
                 if "city" not in columns:
                     await db.execute("ALTER TABLE user_requests ADD COLUMN city TEXT DEFAULT '';")
+                if "shipping_method" not in columns:
+                    await db.execute("ALTER TABLE user_requests ADD COLUMN shipping_method TEXT DEFAULT 'freight';")
 
                 ord_cursor = await db.execute("PRAGMA table_info(orders);")
                 ord_columns = [row[1] for row in await ord_cursor.fetchall()]
                 if "total_price" not in ord_columns:
                     await db.execute("ALTER TABLE orders ADD COLUMN total_price TEXT DEFAULT '0';")
+                if "shipping_method" not in ord_columns:
+                    await db.execute("ALTER TABLE orders ADD COLUMN shipping_method TEXT DEFAULT 'freight';")
             except Exception as e:
                 logger.warning(f"Orders/Requests auto-migration note: {e}")
 
@@ -377,32 +383,71 @@ class Database:
 
     async def create_order(self, order: Dict[str, Any]) -> str:
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                INSERT INTO orders (
-                    order_code, user_id, username, product_id, product_name,
-                    full_name, phone1, phone2, province_city, address, postal_code,
-                    total_price, deposit_amount, status, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                order.get("order_code"),
-                order.get("user_id"),
-                order.get("username", ""),
-                order.get("product_id", ""),
-                order.get("product_name", ""),
-                order.get("full_name", ""),
-                order.get("phone1", ""),
-                order.get("phone2", ""),
-                order.get("province_city", ""),
-                order.get("address", ""),
-                order.get("postal_code", ""),
-                str(order.get("total_price", "0")),
-                str(order.get("deposit_amount", "0")),
-                order.get("status", "Awaiting_Payment"),
-                datetime.now().isoformat(),
-                datetime.now().isoformat()
-            ))
-            await db.commit()
+            shipping_method = order.get("shipping_method", "freight")
+            try:
+                await db.execute("""
+                    INSERT INTO orders (
+                        order_code, user_id, username, product_id, product_name,
+                        full_name, phone1, phone2, province_city, address, postal_code,
+                        total_price, deposit_amount, shipping_method, status, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    order.get("order_code"),
+                    order.get("user_id"),
+                    order.get("username", ""),
+                    order.get("product_id", ""),
+                    order.get("product_name", ""),
+                    order.get("full_name", ""),
+                    order.get("phone1", ""),
+                    order.get("phone2", ""),
+                    order.get("province_city", ""),
+                    order.get("address", ""),
+                    order.get("postal_code", ""),
+                    str(order.get("total_price", "0")),
+                    str(order.get("deposit_amount", "0")),
+                    shipping_method,
+                    order.get("status", "Awaiting_Payment"),
+                    datetime.now().isoformat(),
+                    datetime.now().isoformat()
+                ))
+                await db.commit()
+            except aiosqlite.OperationalError as oe:
+                if "no column named shipping_method" in str(oe).lower():
+                    try:
+                        await db.execute("ALTER TABLE orders ADD COLUMN shipping_method TEXT DEFAULT 'freight';")
+                        await db.commit()
+                    except Exception:
+                        pass
+                    await db.execute("""
+                        INSERT INTO orders (
+                            order_code, user_id, username, product_id, product_name,
+                            full_name, phone1, phone2, province_city, address, postal_code,
+                            total_price, deposit_amount, shipping_method, status, created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        order.get("order_code"),
+                        order.get("user_id"),
+                        order.get("username", ""),
+                        order.get("product_id", ""),
+                        order.get("product_name", ""),
+                        order.get("full_name", ""),
+                        order.get("phone1", ""),
+                        order.get("phone2", ""),
+                        order.get("province_city", ""),
+                        order.get("address", ""),
+                        order.get("postal_code", ""),
+                        str(order.get("total_price", "0")),
+                        str(order.get("deposit_amount", "0")),
+                        shipping_method,
+                        order.get("status", "Awaiting_Payment"),
+                        datetime.now().isoformat(),
+                        datetime.now().isoformat()
+                    ))
+                    await db.commit()
+                else:
+                    raise oe
             return order.get("order_code", "")
 
     async def check_and_expire_orders(self, hours: float = 5.0) -> List[str]:
@@ -798,19 +843,39 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-    async def answer_price_inquiry(self, inquiry_id: int, admin_response: str, final_price: str = "") -> bool:
-        """ثبت پاسخ ادمین به استعلام قیمت"""
+    async def answer_price_inquiry(self, inquiry_id: int, admin_response: str, final_price: str = "", shipping_method: str = "freight") -> bool:
+        """ثبت پاسخ ادمین به استعلام قیمت همراه با شیوه ارسال"""
         async with aiosqlite.connect(self.db_path) as db:
             try:
                 await db.execute("""
                     UPDATE user_requests SET 
                         status = 'Answered',
                         admin_response = ?,
-                        final_price = ?
+                        final_price = ?,
+                        shipping_method = ?
                     WHERE id = ?
-                """, (admin_response, final_price, inquiry_id))
+                """, (admin_response, final_price, shipping_method, inquiry_id))
                 await db.commit()
                 return True
+            except aiosqlite.OperationalError as oe:
+                if "no column named shipping_method" in str(oe).lower():
+                    try:
+                        await db.execute("ALTER TABLE user_requests ADD COLUMN shipping_method TEXT DEFAULT 'freight';")
+                        await db.commit()
+                        await db.execute("""
+                            UPDATE user_requests SET 
+                                status = 'Answered',
+                                admin_response = ?,
+                                final_price = ?,
+                                shipping_method = ?
+                            WHERE id = ?
+                        """, (admin_response, final_price, shipping_method, inquiry_id))
+                        await db.commit()
+                        return True
+                    except Exception as e2:
+                        logger.error(f"Failed fallback update inquiry: {e2}")
+                logger.error(f"Error answering price inquiry #{inquiry_id}: {oe}")
+                return False
             except Exception as e:
                 logger.error(f"Error answering price inquiry #{inquiry_id}: {e}")
                 return False

@@ -563,38 +563,81 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     total_price = 0
 
         dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
+        shipping_method = context.user_data.pop("admin_answering_shipping_method", "freight")
+        is_post = (shipping_method == "post")
+
         if total_price < 10000:
             context.user_data["admin_answering_inquiry_id"] = req_id
+            context.user_data["admin_answering_shipping_method"] = shipping_method
             await update.message.reply_text(
                 "❌ لطفاً <b>فقط مبلغ قیمت تمام‌شده کالا را به عدد (تومان)</b> وارد و ارسال فرمایید:\n"
-                f"<i>(این مبلغ مبنای اصلی سفارش، صدور فاکتور و محاسبه خودکار {dep_pct}٪ بیعانه قرار می‌گیرد - مثال: ۳۸,۵۰۰,۰۰۰ یا 38500000)</i>",
+                f"<i>(مثال: ۳۸,۵۰۰,۰۰۰ یا 38500000)</i>",
                 parse_mode="HTML"
             )
             return
 
-        # محاسبه بیعانه رند شده به نزدیک‌ترین ۱۰ هزار تومان بر اساس درصد تنظیم شده
-        deposit_amount = int(round((total_price * (dep_pct / 100.0)) / 10000)) * 10000
-        if deposit_amount == 0:
-            deposit_amount = int(round((total_price * (dep_pct / 100.0)) / 1000)) * 1000
-        remaining_amount = max(0, total_price - deposit_amount)
+        # محاسبه بیعانه بر اساس شیوه ارسال
+        if is_post:
+            deposit_amount = total_price
+            remaining_amount = 0
+        else:
+            deposit_amount = int(round((total_price * (dep_pct / 100.0)) / 10000)) * 10000
+            if deposit_amount == 0:
+                deposit_amount = int(round((total_price * (dep_pct / 100.0)) / 1000)) * 1000
+            remaining_amount = max(0, total_price - deposit_amount)
 
-        # ثبت قیمت تمام شده در دیتابیس به عنوان مبنای قطعی
-        await db.answer_price_inquiry(req_id, admin_response=str(total_price), final_price=str(total_price))
+        # ثبت قیمت تمام شده و شیوه ارسال در دیتابیس به عنوان مبنای قطعی
+        await db.answer_price_inquiry(
+            req_id,
+            admin_response=str(total_price),
+            final_price=str(total_price),
+            shipping_method=shipping_method
+        )
 
         f_total_price = to_fa_digits(f"{total_price:,}")
         f_deposit = to_fa_digits(f"{deposit_amount:,}")
         f_remaining = to_fa_digits(f"{remaining_amount:,}")
 
+        if is_post:
+            method_name = "📮 پست پیشتاز (تسویه کامل ۱۰۰٪ - بدون بیعانه)"
+            admin_financial_block = (
+                f"💰 <b>قیمت قطعی روز با هزینه ارسال:</b>\n"
+                f"<b>{f_total_price} تومان</b>\n\n"
+                f"💳 <b>شرایط پرداخت:</b>\n"
+                f"<b>تسویه کامل ۱۰۰٪ پیش از ارسال (بدون بیعانه)</b>\n"
+                f"▫️ <b>مانده در محل:</b> <b>۰ تومان</b>"
+            )
+            cust_financial_block = (
+                f"💰 <b>قیمت قطعی روز کالا:</b>\n"
+                f"<b>{f_total_price} تومان</b>\n\n"
+                f"💳 <b>مبلغ قابل پرداخت جهت ثبت سفارش:</b>\n"
+                f"<b>{f_total_price} تومان (تسویه ۱۰۰٪ کامل)</b>\n\n"
+                f"▫️ <i>نکته: ارسال این سفارش از طریق پست پیشتاز انجام می‌پذیرد و تسویه کامل پیش از ارسال می‌باشد (بدون بیعانه).</i>"
+            )
+        else:
+            method_name = f"🚚 باربری / پیک (بیعانه {dep_pct}٪ + تسویه در محل)"
+            admin_financial_block = (
+                f"💰 <b>قیمت قطعی روز با احتساب هزینه ارسال درب منزل:</b>\n"
+                f"<b>{f_total_price} تومان</b>\n\n"
+                f"💳 <b>مبلغ بیعانه {dep_pct}٪ محاسبه‌شده:</b>\n"
+                f"<b>{f_deposit} تومان</b>\n\n"
+                f"▫️ <b>مانده تسویه در محل:</b> <b>{f_remaining} تومان</b>"
+            )
+            cust_financial_block = (
+                f"💰 <b>قیمت قطعی روز با احتساب هزینه ارسال درب منزل:</b>\n"
+                f"<b>{f_total_price} تومان</b>\n\n"
+                f"💳 <b>مبلغ بیعانه جهت ثبت سفارش و ارسال ({dep_pct}٪):</b>\n"
+                f"<b>{f_deposit} تومان</b>\n\n"
+                f"▫️ <i>مانده تسویه پس از تحویل و تست سلامت کالا: {f_remaining} تومان</i>"
+            )
+
         await update.message.reply_text(
             f"✅ <b>پاسخ استعلام با موفقیت برای خریدار ارسال گردید.</b>\n\n"
             f"📦 <b>کالا:</b> {inq.get('product_name')}\n"
             f"📍 <b>مقصد:</b> {inq.get('city')}\n"
+            f"🛵 <b>شیوه ارسال:</b> <b>{method_name}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"💰 <b>قیمت قطعی روز با احتساب هزینه ارسال درب منزل:</b>\n"
-            f"<b>{f_total_price} تومان</b>\n\n"
-            f"💳 <b>مبلغ بیعانه {dep_pct}٪ محاسبه‌شده:</b>\n"
-            f"<b>{f_deposit} تومان</b>\n\n"
-            f"▫️ <b>مانده تسویه در محل:</b> <b>{f_remaining} تومان</b>",
+            f"{admin_financial_block}",
             parse_mode="HTML"
         )
 
@@ -605,12 +648,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📦 <b>کالا:</b> {inq.get('product_name')}\n"
             f"📍 <b>مقصد تحویل:</b> {inq.get('city')}\n"
+            f"🛵 <b>نحوه ارسال:</b> <b>{method_name}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"💰 <b>قیمت قطعی روز با احتساب هزینه ارسال درب منزل:</b>\n"
-            f"<b>{f_total_price} تومان</b>\n\n"
-            f"💳 <b>مبلغ بیعانه جهت ثبت سفارش و ارسال ({dep_pct}٪):</b>\n"
-            f"<b>{f_deposit} تومان</b>\n\n"
-            f"▫️ <i>مانده تسویه پس از تحویل و تست سلامت کالا: {f_remaining} تومان</i>\n"
+            f"{cust_financial_block}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⏳ <b>توجه:</b> این قیمت و شرایط تحویل تا <b>۵ ساعت</b> کاری معتبر می‌باشد.\n\n"
             f"👇 <i>جهت نهایی کردن خرید و صدور پیش‌فاکتور رسمی، دکمه زیر را لمس فرمایید:</i>"
@@ -656,14 +696,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📍 <b>مقصد تحویل:</b> {city}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⏳ مشخصات به واحد فروش ارسال گردید.\n"
-            f"قیمت قطعی روز و شرایط دقیق ارسال تا دقایقی دیگر به همراه دکمه پیش‌فاکتور در همین صفحه برای شما ارسال می‌شود.",
+            f"قیمت قطعی روز و شرایط دقیق ارسال تا دقایقی دیگر به همراه دکمه پیش‌فاکتور در همین صفحه برای شما ارسال می‌شود.\n\n"
+            f"ℹ️ <i>یادآوری: لوازم خانگی درشت با باربری (بیعانه + تسویه در محل) و برخی محصولات ریز با پست پیشتاز (تسویه کامل قبل از ارسال) ارسال می‌گردند.</i>",
             parse_mode="HTML"
         )
 
         # ارسال اعلان غیرمسدودکننده به ادمین‌ها در پس‌زمینه (Zero Latency برای مشتری)
         admin_kb = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✍️ پاسخ به استعلام قیمت", callback_data=f"ans_inq|{req_id}"),
+                InlineKeyboardButton("🚚 پاسخ با باربری (بیعانه)", callback_data=f"set_ship|freight|{req_id}"),
+                InlineKeyboardButton("📮 پاسخ با پست (تسویه کامل)", callback_data=f"set_ship|post|{req_id}")
+            ],
+            [
                 InlineKeyboardButton("❌ اتمام موجودی", callback_data=f"out_of_stock|{req_id}")
             ]
         ])
@@ -931,7 +975,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f"💰 <b>استعلام قیمت تمام‌شده و کرایه کالا:</b>\n"
             f"📦 <b>{pname}</b>\n\n"
             f"🏙 لطفاً <b>شهر مقصد تحویل</b> را از گزینه‌های زیر لمس فرمایید، یا نام شهر خود را به صورت متنی تایپ و ارسال نمایید:\n"
-            f"<i>(مثال: قم، اهواز، کرمان یا تهران - تهران)</i>"
+            f"<i>(مثال: قم، اهواز، کرمان یا تهران - تهران)</i>\n\n"
+            f"💡 <i>نکته ارسال: لوازم خانگی درشت با باربری (بیعانه + تسویه در محل) و برخی محصولات ریز با پست پیشتاز (تسویه کامل قبل از ارسال) ارسال می‌گردند.</i>"
         )
         # اجرای موازی answer و reply_text جهت دریافت بازخورد آنی کاربر بدون معطلی شبکه
         await asyncio.gather(
@@ -971,14 +1016,18 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     f"📍 <b>مقصد تحویل:</b> {city}\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"⏳ مشخصات به واحد فروش ارسال گردید.\n"
-                    f"قیمت قطعی روز و شرایط دقیق ارسال تا دقایقی دیگر به همراه دکمه پیش‌فاکتور در همین صفحه برای شما ارسال می‌شود.",
+                    f"قیمت قطعی روز و شرایط دقیق ارسال تا دقایقی دیگر به همراه دکمه پیش‌فاکتور در همین صفحه برای شما ارسال می‌شود.\n\n"
+                    f"ℹ️ <i>یادآوری: لوازم خانگی درشت با باربری (بیعانه + تسویه در محل) و برخی محصولات ریز با پست پیشتاز (تسویه کامل قبل از ارسال) ارسال می‌گردند.</i>",
                     parse_mode="HTML"
                 )
             )
 
             admin_kb = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("✍️ پاسخ به استعلام قیمت", callback_data=f"ans_inq|{req_id}"),
+                    InlineKeyboardButton("🚚 پاسخ با باربری (بیعانه)", callback_data=f"set_ship|freight|{req_id}"),
+                    InlineKeyboardButton("📮 پاسخ با پست (تسویه کامل)", callback_data=f"set_ship|post|{req_id}")
+                ],
+                [
                     InlineKeyboardButton("❌ اتمام موجودی", callback_data=f"out_of_stock|{req_id}")
                 ]
             ])
@@ -1033,16 +1082,60 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.reply_text("❌ درخواست استعلام یافت نشد یا حذف شده است.")
             return
 
-        context.user_data["admin_answering_inquiry_id"] = req_id
+        dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"🚚 ارسال با باربری (بیعانه {dep_pct}٪ + تسویه در محل)", callback_data=f"set_ship|freight|{req_id}")],
+            [InlineKeyboardButton("📮 ارسال با پست پیشتاز (تسویه ۱۰۰٪ - بدون بیعانه)", callback_data=f"set_ship|post|{req_id}")],
+        ])
         admin_prompt = (
-            f"✍️ <b>پاسخ به استعلام قیمت تمام‌شده کالا:</b>\n"
+            f"✍️ <b>تعیین شیوه ارسال و پاسخ به استعلام قیمت:</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📦 <b>کالا:</b> {inq.get('product_name')}\n"
             f"📍 <b>مقصد تحویل:</b> {inq.get('city')}\n"
             f"👤 <b>مشتری:</b> {inq.get('username')} (شناسه: <code>{inq.get('user_id')}</code>)\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"💬 لطفاً <b>فقط مبلغ قیمت تمام‌شده (به تومان)</b> را وارد و ارسال فرمایید:\n"
-            f"<i>(این قیمت مبنای اصلی قرار گرفته و مبلغ بیعانه ۸٪ جهت واریز و صدور پیش‌فاکتور خودکار محاسبه می‌شود - مثال: ۳۸,۵۰۰,۰۰۰ یا 38500000)</i>"
+            f"👇 <b>لطفاً نحوه ارسال کالا برای این سفارش را انتخاب فرمایید:</b>\n\n"
+            f"▫️ <b>🚚 باربری:</b> دریافت بیعانه ({dep_pct}٪) + تسویه مانده درب منزل پس از تست سلامت\n"
+            f"▫️ <b>📮 پست پیشتاز:</b> واریز ۱۰۰٪ مبلغ کل کالا قبل از ارسال (بدون بیعانه)"
+        )
+        await query.message.reply_text(admin_prompt, reply_markup=kb, parse_mode="HTML")
+
+    elif data.startswith("set_ship|"):
+        await query.answer()
+        user_id = query.from_user.id
+        if not is_admin(user_id):
+            await query.message.reply_text("⛔️ دسترسی به این بخش فقط مخصوص مدیران فروشگاه است.")
+            return
+
+        parts = data.split("|")
+        shipping_method = parts[1]
+        req_id = int(parts[2])
+
+        inq = await db.get_price_inquiry(req_id)
+        if not inq:
+            await query.message.reply_text("❌ درخواست استعلام یافت نشد یا حذف شده است.")
+            return
+
+        context.user_data["admin_answering_inquiry_id"] = req_id
+        context.user_data["admin_answering_shipping_method"] = shipping_method
+
+        dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
+        if shipping_method == "post":
+            method_desc = "📮 <b>پست پیشتاز (تسویه ۱۰۰٪ کامل قبل از ارسال - بدون بیعانه)</b>"
+            calc_hint = "مشتری ملزم به واریز کل این مبلغ خواهد بود و بیعانه‌ای دریافت نمی‌شود"
+        else:
+            method_desc = f"🚚 <b>باربری / پیک (دریافت {dep_pct}٪ بیعانه + تسویه مانده در محل)</b>"
+            calc_hint = f"مبلغ بیعانه {dep_pct}٪ به صورت خودکار محاسبه شده و مانده در محل تسویه می‌شود"
+
+        admin_prompt = (
+            f"✍️ <b>ثبت قیمت تمام‌شده کالا:</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 <b>کالا:</b> {inq.get('product_name')}\n"
+            f"📍 <b>مقصد تحویل:</b> {inq.get('city')}\n"
+            f"🛵 <b>نحوه ارسال انتخابی:</b> {method_desc}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💬 لطفاً <b>فقط مبلغ قیمت تمام‌شده کالا (به تومان)</b> را وارد و ارسال فرمایید:\n"
+            f"<i>({calc_hint} - مثال: ۳۸,۵۰۰,۰۰۰ یا 38500000)</i>"
         )
         await query.message.reply_text(admin_prompt, parse_mode="HTML")
 
@@ -1284,10 +1377,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("adm_ok|"):
         await query.answer("فیش تایید شد")
         code = data.split("|")[1]
-        await db.update_order_status(code, status="Approved", admin_note="فیش بانکی و بیعانه تایید شد. تخصیص به واحد ترابری.")
+        order = await db.get_order_by_code(code)
+        shipping_method = order.get("shipping_method", "freight") if order else "freight"
+        is_post = (shipping_method == "post")
+
+        admin_note = "تسویه کامل فاکتور تایید شد. تخصیص به واحد بسته‌بندی و تحویل به پست پیشتاز." if is_post else "فیش بانکی و بیعانه تایید شد. تخصیص به واحد ترابری."
+        await db.update_order_status(code, status="Approved", admin_note=admin_note)
+        # بازخوانی رکورد به‌روزشده
         order = await db.get_order_by_code(code)
 
-        # مرحله دوم: تولید فاکتور رسمی و قطعی فروش با برچسب سبز تسویه بیعانه
+        # مرحله دوم: تولید فاکتور رسمی و قطعی فروش
         invoice_path = None
         if order:
             try:
@@ -1305,16 +1404,28 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 [InlineKeyboardButton("📞 پشتیبانی و ترابری", callback_data="show_support")],
                 [InlineKeyboardButton("🏠 منوی اصلی", callback_data="back_to_main")]
             ])
-            success_caption = (
-                f"🎉 <b>فاکتور رسمی و قطعی فروش صادر گردید!</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"✅ <b>بیعانه سفارش <code>{code}</code> با موفقیت تایید شد.</b>\n"
-                f"📦 کالا از انبار ترخیص و تحویل واحد ترابری و بارچین اختصاصی گردید.\n"
-                f"🚚 <b>وضعیت سفارش: در حال ارسال</b>\n"
-                f"📋 <i>تسویه مانده‌حساب پس از تحویل و تست سلامت فیزیکی در محل انجام خواهد شد.</i>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"👇 <i>جهت مشاهده موقعیت لحظه‌ای و تایم‌لاین ارسال، دکمه پیگیری سفارش را لمس فرمایید:</i>"
-            )
+            if is_post:
+                success_caption = (
+                    f"🎉 <b>فاکتور رسمی و قطعی فروش صادر گردید!</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"✅ <b>تسویه کامل سفارش <code>{code}</code> با موفقیت تایید شد.</b>\n"
+                    f"📦 کالا از انبار ترخیص و جهت بسته‌بندی ضدضربه و تحویل به اداره پست پیشتاز ارجاع گردید.\n"
+                    f"📮 <b>نحوه ارسال: پست پیشتاز (تسویه کامل - مانده صفر)</b>\n"
+                    f"📋 <i>کد رهگیری مرسوله پستی به محض تحویل به اداره پست از طریق بخش پیگیری سفارشات برای شما ثبت خواهد شد.</i>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👇 <i>جهت مشاهده موقعیت لحظه‌ای و تایم‌لاین سفارش، دکمه پیگیری سفارش را لمس فرمایید:</i>"
+                )
+            else:
+                success_caption = (
+                    f"🎉 <b>فاکتور رسمی و قطعی فروش صادر گردید!</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"✅ <b>بیعانه سفارش <code>{code}</code> با موفقیت تایید شد.</b>\n"
+                    f"📦 کالا از انبار ترخیص و تحویل واحد ترابری و بارچین اختصاصی گردید.\n"
+                    f"🚚 <b>وضعیت سفارش: در حال ارسال با باربری</b>\n"
+                    f"📋 <i>تسویه مانده‌حساب پس از تحویل و تست سلامت فیزیکی در محل انجام خواهد شد.</i>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👇 <i>جهت مشاهده موقعیت لحظه‌ای و تایم‌لاین ارسال، دکمه پیگیری سفارش را لمس فرمایید:</i>"
+                )
             try:
                 if invoice_path and os.path.exists(invoice_path):
                     with open(invoice_path, "rb") as f_inv:
@@ -1338,14 +1449,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             except Exception as e:
                 logger.warning(f"Could not notify buyer {buyer_id}: {e}")
 
+        method_lbl = "پست پیشتاز (تسویه کامل)" if is_post else "باربری (بیعانه)"
         try:
             await query.edit_message_caption(
-                caption=f"✅ فیش سفارش <code>{code}</code> تایید شد.\n📄 فاکتور قطعی فروش صادر و برای مشتری ارسال گردید.",
+                caption=f"✅ فیش سفارش <code>{code}</code> ({method_lbl}) تایید شد.\n📄 فاکتور قطعی فروش صادر و برای مشتری ارسال گردید.",
                 parse_mode="HTML"
             )
         except Exception:
             await query.message.reply_text(
-                f"✅ فیش سفارش <code>{code}</code> تایید و فاکتور نهایی برای مشتری ارسال گردید.",
+                f"✅ فیش سفارش <code>{code}</code> ({method_lbl}) تایید و فاکتور نهایی برای مشتری ارسال گردید.",
                 parse_mode="HTML"
             )
 

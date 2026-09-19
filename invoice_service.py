@@ -600,22 +600,45 @@ def generate_invoice_png(order_data: dict, output_path: str = "invoice.png", is_
 
     draw_fin_row(y + 20, "مبلغ کل فاکتور:", order_data.get("grand_total", "۰"))
 
+    is_post = order_data.get("shipping_method") == "post" or (
+        order_data.get("deposit") == order_data.get("grand_total") and order_data.get("remaining") in ["۰", "0", ""]
+    )
+    dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
+
     if is_pre_invoice:
-        draw_fin_row(y + 64, "مبلغ بیعانه پیش‌پرداخت (۸٪):", order_data.get("deposit", "۰"), val_color=COLOR_ORANGE_DARK)
-        # کادر برجسته مانده
-        draw.rounded_rectangle([fin_lx1, y + 118, fin_lx2, y + 188], radius=8, fill=COLOR_ORANGE_BG, outline=COLOR_ORANGE_BORDER, width=1)
-        t_rem_lbl = fa("مانده قابل پرداخت در محل:")
-        t_rem_val = fa(f"{order_data.get('remaining', '۰')} تومان")
-        draw.text((fin_lx2 - 16 - _text_size(draw, t_rem_lbl, _get_font(20, bold=True))[0], y + 140), t_rem_lbl, font=_get_font(20, bold=True), fill=COLOR_ORANGE_DARK)
-        draw.text((fin_lx1 + 16, y + 138), t_rem_val, font=_get_font(23, bold=True), fill=COLOR_ORANGE_DARK)
+        if is_post:
+            draw_fin_row(y + 64, "مبلغ قابل پرداخت (تسویه کامل):", order_data.get("grand_total", "۰"), val_color=COLOR_ORANGE_DARK)
+            # کادر برجسته شیوه ارسال پستی
+            draw.rounded_rectangle([fin_lx1, y + 118, fin_lx2, y + 188], radius=8, fill=COLOR_ORANGE_BG, outline=COLOR_ORANGE_BORDER, width=1)
+            t_rem_lbl = fa("شیوه ارسال و شرایط تسویه:")
+            t_rem_val = fa("پست پیشتاز (تسویه کامل - مانده صفر)")
+            draw.text((fin_lx2 - 16 - _text_size(draw, t_rem_lbl, _get_font(18, bold=True))[0], y + 140), t_rem_lbl, font=_get_font(18, bold=True), fill=COLOR_ORANGE_DARK)
+            draw.text((fin_lx1 + 16, y + 138), t_rem_val, font=_get_font(20, bold=True), fill=COLOR_ORANGE_DARK)
+        else:
+            draw_fin_row(y + 64, f"مبلغ بیعانه پیش‌پرداخت ({dep_pct}٪):", order_data.get("deposit", "۰"), val_color=COLOR_ORANGE_DARK)
+            # کادر برجسته مانده
+            draw.rounded_rectangle([fin_lx1, y + 118, fin_lx2, y + 188], radius=8, fill=COLOR_ORANGE_BG, outline=COLOR_ORANGE_BORDER, width=1)
+            t_rem_lbl = fa("مانده قابل پرداخت در محل:")
+            t_rem_val = fa(f"{order_data.get('remaining', '۰')} تومان")
+            draw.text((fin_lx2 - 16 - _text_size(draw, t_rem_lbl, _get_font(20, bold=True))[0], y + 140), t_rem_lbl, font=_get_font(20, bold=True), fill=COLOR_ORANGE_DARK)
+            draw.text((fin_lx1 + 16, y + 138), t_rem_val, font=_get_font(23, bold=True), fill=COLOR_ORANGE_DARK)
     else:
-        draw_fin_row(y + 64, "بیعانه پرداخت‌شده (۸٪):", f"{order_data.get('deposit', '۰')}  [ تایید شد ]", val_color=COLOR_GREEN_DARK)
-        # کادر برجسته مانده تسویه در محل
-        draw.rounded_rectangle([fin_lx1, y + 118, fin_lx2, y + 192], radius=8, fill=COLOR_RED_BG, outline=COLOR_RED_BORDER, width=1)
-        t_rem_lbl = fa("مانده تسویه بعد از تست در محل:")
-        t_rem_val = fa(f"{order_data.get('remaining', '۰')} تومان")
-        draw.text((fin_lx2 - 16 - _text_size(draw, t_rem_lbl, _get_font(20, bold=True))[0], y + 142), t_rem_lbl, font=_get_font(20, bold=True), fill=COLOR_RED)
-        draw.text((fin_lx1 + 16, y + 140), t_rem_val, font=_get_font(24, bold=True), fill=COLOR_RED)
+        if is_post:
+            draw_fin_row(y + 64, "مبلغ پرداخت‌شده (تسویه ۱۰۰٪ کامل):", f"{order_data.get('grand_total', '۰')}  [ تایید شد ]", val_color=COLOR_GREEN_DARK)
+            # کادر برجسته وضعیت تسویه پستی
+            draw.rounded_rectangle([fin_lx1, y + 118, fin_lx2, y + 192], radius=8, fill=COLOR_GREEN_BG, outline=COLOR_GREEN_BORDER, width=1)
+            t_rem_lbl = fa("وضعیت حساب و شیوه تحویل:")
+            t_rem_val = fa("تسویه کامل - تحویل به پست پیشتاز")
+            draw.text((fin_lx2 - 16 - _text_size(draw, t_rem_lbl, _get_font(18, bold=True))[0], y + 142), t_rem_lbl, font=_get_font(18, bold=True), fill=COLOR_GREEN_DARK)
+            draw.text((fin_lx1 + 16, y + 140), t_rem_val, font=_get_font(20, bold=True), fill=COLOR_GREEN_DARK)
+        else:
+            draw_fin_row(y + 64, f"بیعانه پرداخت‌شده ({dep_pct}٪):", f"{order_data.get('deposit', '۰')}  [ تایید شد ]", val_color=COLOR_GREEN_DARK)
+            # کادر برجسته مانده تسویه در محل
+            draw.rounded_rectangle([fin_lx1, y + 118, fin_lx2, y + 192], radius=8, fill=COLOR_RED_BG, outline=COLOR_RED_BORDER, width=1)
+            t_rem_lbl = fa("مانده تسویه بعد از تست در محل:")
+            t_rem_val = fa(f"{order_data.get('remaining', '۰')} تومان")
+            draw.text((fin_lx2 - 16 - _text_size(draw, t_rem_lbl, _get_font(20, bold=True))[0], y + 142), t_rem_lbl, font=_get_font(20, bold=True), fill=COLOR_RED)
+            draw.text((fin_lx1 + 16, y + 140), t_rem_val, font=_get_font(24, bold=True), fill=COLOR_RED)
 
     y += finance_h + 24
 
@@ -775,17 +798,22 @@ def build_invoice_data_from_order(order: dict, product: dict = None) -> dict:
 
     price = _clean_num(order.get('total_price')) or _clean_num(order.get('final_price')) or _clean_num(prod.get('price')) or _clean_num(order.get('price'))
     deposit = _clean_num(order.get('deposit_amount'))
+    shipping_method = order.get('shipping_method', 'freight')
 
     dep_pct = getattr(config, "DEPOSIT_PERCENT", 8)
-    if deposit == 0 and price > 0:
-        deposit = int(round((price * (dep_pct / 100.0)) / 10000)) * 10000
-        if deposit == 0:
-            deposit = int(round((price * (dep_pct / 100.0)) / 1000)) * 1000
+    if shipping_method == "post":
+        deposit = price
+        remaining = 0
+    else:
+        if deposit == 0 and price > 0:
+            deposit = int(round((price * (dep_pct / 100.0)) / 10000)) * 10000
+            if deposit == 0:
+                deposit = int(round((price * (dep_pct / 100.0)) / 1000)) * 1000
 
-    if price == 0 and deposit > 0:
-        price = int(round((deposit / (dep_pct / 100.0)) / 10000)) * 10000
+        if price == 0 and deposit > 0:
+            price = int(round((deposit / (dep_pct / 100.0)) / 10000)) * 10000
 
-    remaining = max(0, price - deposit)
+        remaining = max(0, price - deposit)
 
     p_name = prod.get('name') or order.get('product_name') or 'کالای انتخابی هوشمند کالا'
     p_brand = prod.get('brand') or order.get('brand', 'اورجینال شرکتی')
@@ -802,6 +830,7 @@ def build_invoice_data_from_order(order: dict, product: dict = None) -> dict:
         "invoice_number": f"INV-{order.get('order_code', '')}",
         "date": _persian_now_formatted(),
         "order_code": order.get('order_code', ''),
+        "shipping_method": shipping_method,
         "customer_name": order.get('full_name', 'خریدار محترم'),
         "customer_phone": order.get('phone1', '-'),
         "customer_phone2": order.get('phone2', ''),
