@@ -131,6 +131,11 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             InlineKeyboardButton("📡 پایش کانال‌ها و آلبوم‌ها (@AiKala_Image)", callback_data="adm_channels")
         ],
         
+        # ۶. تنظیمات موتور هوش مصنوعی مشخصات کالا
+        [
+            InlineKeyboardButton("🤖 تنظیمات هوش مصنوعی مشخصات کالا", callback_data="adm_ai_settings")
+        ],
+        
         # بازگشت به منوی اصلی ربات
         [InlineKeyboardButton("🔙 بازگشت به منوی اصلی فروشگاه", callback_data="back_to_main")]
     ])
@@ -1546,4 +1551,92 @@ async def admin_delete_channel_handler(update: Update, context: ContextTypes.DEF
 
     # بازگشت به لیست
     await admin_list_channels_delete(update, context)
+
+
+async def admin_ai_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """منوی تنظیم و انتخاب موتور هوش مصنوعی برای استخراج مشخصات فنی کالا"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    from gemini_enricher import get_ai_settings, get_gemini_api_key, get_deepseek_api_key, get_active_provider_label
+
+    settings = get_ai_settings()
+    active_provider = settings.get("provider", "gemini")
+
+    gemini_key = get_gemini_api_key()
+    deepseek_key = get_deepseek_api_key()
+
+    gemini_key_status = "✅ تنظیم‌شده در .env" if gemini_key else "⚠️ ثبت‌نشده در .env"
+    deepseek_key_status = "✅ تنظیم‌شده در .env" if deepseek_key else "⚠️ ثبت‌نشده در .env"
+
+    provider_title = get_active_provider_label()
+
+    text = (
+        f"🤖 <b>تنظیمات هوش مصنوعی مشخصات فنی کالاها:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 <b>نحوه کارکرد سامانه:</b>\n"
+        f"استخراج مشخصات کاملاً <b>تقاضامحور (On-Demand)</b> است؛ فقط در صورتی که کاربری روی کالای فاقد مشخصات کلیک کند فعال می‌شود و مشخصات دقیق مبتنی بر نام و کد مدل کارخانه را استخراج کرده و <b>یکبار برای همیشه</b> در کاتالوگ و دیتابیس ثبت می‌کند.\n\n"
+        f"▫️ <b>موتور فعال فعلی:</b>\n"
+        f"<b>{provider_title}</b>\n\n"
+        f"🔑 <b>وضعیت کلیدهای API در سرور:</b>\n"
+        f"▫️ کلید جمینای (GEMINI_API_KEY): {gemini_key_status}\n"
+        f"▫️ کلید دیپ‌سیک (DEEPSEEK_API_KEY): {deepseek_key_status}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👇 جهت فعالسازی یا تغییر موتور هوش مصنوعی، گزینه مورد نظر را انتخاب فرمایید:"
+    )
+
+    btn_gemini = InlineKeyboardButton(
+        "✅ گوگل جمینای ♊️ (فعال)" if active_provider == "gemini" else "فعالسازی گوگل جمینای (Gemini) ♊️",
+        callback_data="adm_ai_set_gemini"
+    )
+    btn_deepseek = InlineKeyboardButton(
+        "✅ دیپ‌سیک 🤖 (فعال)" if active_provider == "deepseek" else "فعالسازی دیپ‌سیک (DeepSeek) 🤖",
+        callback_data="adm_ai_set_deepseek"
+    )
+    btn_off = InlineKeyboardButton(
+        "✅ هوش مصنوعی خاموش است 🛑" if active_provider in ["off", "disabled"] else "🛑 خاموش کردن هوش مصنوعی",
+        callback_data="adm_ai_set_off"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [btn_gemini],
+        [btn_deepseek],
+        [btn_off],
+        [InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="adm_back_panel")]
+    ])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+
+async def admin_ai_set_provider_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, target_provider: str):
+    """مدیریت سوییچ موتور هوش مصنوعی توسط ادمین"""
+    user = update.effective_user
+    if not is_admin(user.id):
+        return
+
+    from gemini_enricher import set_ai_provider
+
+    set_ai_provider(target_provider)
+    if update.callback_query:
+        if target_provider == "gemini":
+            msg = "✅ موتور هوش مصنوعی بر روی Google Gemini تنظیم شد."
+        elif target_provider == "deepseek":
+            msg = "✅ موتور هوش مصنوعی بر روی DeepSeek تنظیم شد."
+        else:
+            msg = "🛑 استخراج هوش مصنوعی با موفقیت خاموش گردید."
+        try:
+            await update.callback_query.answer(msg, show_alert=True)
+        except Exception:
+            pass
+
+    await admin_ai_settings_menu(update, context)
+
 

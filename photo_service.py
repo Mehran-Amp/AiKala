@@ -1023,13 +1023,12 @@ def get_product_photos(product: dict, query_context: str = "") -> Tuple[List[str
 # ─── ارسال کارت کالا و عکس ───
 
 async def send_product_card_and_photos(chat_id: int, product: dict, context: ContextTypes.DEFAULT_TYPE, user_query: str = ""):
-    # تکمیل در لحظه مشخصات با هوش مصنوعی (منحصراً فقط برای دسته لوازم ریز طبق دستور)
+    # تکمیل در لحظه مشخصات با هوش مصنوعی (جمینای / دیپ‌سیک / خاموش طبق تنظیمات پنل ادمین)
     try:
-        from enrich_with_deepseek import async_enrich_product_on_demand, is_small_appliance
-        if is_small_appliance(product):
-            await async_enrich_product_on_demand(product)
+        from gemini_enricher import async_enrich_product_with_gemini_on_demand
+        await async_enrich_product_with_gemini_on_demand(product)
     except Exception as e:
-        logger.debug(f"On-demand specs note: {e}")
+        logger.debug(f"On-demand AI specs note: {e}")
 
     pid = str(product.get("product_id", "")).strip()
     p_name = product.get("name", "")

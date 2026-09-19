@@ -126,6 +126,8 @@ from admin_panel import (
     admin_broadcast_ask,
     admin_broadcast_do,
     handle_admin_broadcast_input,
+    admin_ai_settings_menu,
+    admin_ai_set_provider_handler,
     sync_photos_command,
     setphoto_command,
     clearphotos_command,
@@ -1626,6 +1628,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "adm_catalog_report":
         await admin_catalog_report(update, context)
 
+    elif data == "adm_ai_settings":
+        await admin_ai_settings_menu(update, context)
+
+    elif data.startswith("adm_ai_set_"):
+        target_provider = data.replace("adm_ai_set_", "").strip()
+        await admin_ai_set_provider_handler(update, context, target_provider)
+
     elif data == "adm_broadcast_ask":
         await admin_broadcast_ask(update, context)
 
@@ -2069,6 +2078,15 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
 # =====================================================================
 
 def main():
+    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ":
+        logger.error("❌ خطا: متغیر TELEGRAM_BOT_TOKEN تنظیم نشده است! لطفاً توکن ربات تلگرام خود را در فایل .env قرار دهید.")
+        print("\n" + "=" * 60)
+        print("❌ خطا: TELEGRAM_BOT_TOKEN در فایل .env یا متغیرهای محیطی یافت نشد.")
+        print("👉 لطفاً فایل .env را ایجاد کرده و توکن ربات خود از @BotFather را قرار دهید:")
+        print("   TELEGRAM_BOT_TOKEN=\"your_bot_token_here\"")
+        print("=" * 60 + "\n")
+        return
+
     logger.info("🚀 AiKala Bot is initialized and ready to run.")
 
     builder = Application.builder().token(TELEGRAM_BOT_TOKEN)

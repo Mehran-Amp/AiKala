@@ -30,6 +30,10 @@ PHOTOS_CHANNEL: str = TARGET_IMAGE_CHANNEL
 # نام کاربری رسمی پشتیبانی در تلگرام
 SUPPORT_USERNAME: str = os.getenv("SUPPORT_USERNAME", "@faridamp")
 
+# ------------------- AI & Specs Settings -------------------
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
+
 # ------------------- Telethon (Channel Monitor) -------------------
 TELEGRAM_API_ID: int = int(os.getenv("TELEGRAM_API_ID", "31810703"))
 TELEGRAM_API_HASH: str = os.getenv("TELEGRAM_API_HASH", "43e05e117c0abddd1004e2bc2c478959")
@@ -62,16 +66,18 @@ BANK_SETTINGS_FILE = "bank_settings.json"
 
 def _load_bank_settings():
     default_cfg = {
-        "card_number": os.getenv("DEPOSIT_CARD_NUMBER", ""),
-        "card_holder": os.getenv("DEPOSIT_CARD_NAME", ""),
-        "card_shaba": os.getenv("DEPOSIT_CARD_SHABA", ""),
+        "card_number": os.getenv("DEPOSIT_CARD_NUMBER", "6104-3386-4929-6106"),
+        "card_holder": os.getenv("DEPOSIT_CARD_NAME", "فروشگاه آاگ کالا مهران امین پور"),
+        "card_shaba": os.getenv("DEPOSIT_CARD_SHABA", "IR 620120020000005786685564"),
         "deposit_percent": int(os.getenv("DEPOSIT_PERCENT", "8"))
     }
     if os.path.exists(BANK_SETTINGS_FILE):
         try:
             with open(BANK_SETTINGS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                default_cfg.update({k: v for k, v in data.items() if v is not None})
+                for k, v in data.items():
+                    if v is not None and str(v).strip():
+                        default_cfg[k] = v
         except Exception:
             pass
     return default_cfg
